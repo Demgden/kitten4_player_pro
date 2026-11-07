@@ -1,0 +1,26 @@
+# 依赖
+node_modules/
+
+# 打包产物：单文件 exe 188 MB，超过 GitHub 100 MB 上限
+dist/
+
+# 本地调试 / 基准产物
+_probe/
+_bench/
+
+# 工具生成的备份与探针数据
+*.bak
+*.orig
+*.num_orig
+src/player/build/_k4probe.json
+
+# 本地产出笔记
+.workbuddy/
+
+# 编辑器 / 系统
+.vscode/
+.idea/
+Thumbs.db
+Desktop.ini
+.DS_Store
+*.log

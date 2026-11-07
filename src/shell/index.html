@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; img-src 'self' data: https:;">
+<title>Kitten4 播放器</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="app">
+  <header class="titlebar" id="titlebar">
+    <div class="brand">
+      <span class="logo">
+        <svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true"><path d="M8 5.2v13.6c0 .9 1 1.4 1.7.9l10-6.8c.6-.4.6-1.4 0-1.8l-10-6.8C9 3.8 8 4.3 8 5.2z" fill="currentColor"/></svg>
+      </span>
+      <span class="brand-name">Kitten4 播放器</span>
+    </div>
+
+    <div class="file-chip" id="fileChip" hidden>
+      <span class="dot"></span>
+      <span class="chip-title" id="chipTitle"></span>
+    </div>
+
+    <div class="drag-fill"></div>
+
+    <div class="toolbar" id="toolbar" hidden>
+      <button class="btn ghost" id="btnReload" title="重新开始 (Ctrl+R)">
+        <svg viewBox="0 0 24 24" width="14" height="14"><path d="M12 5a7 7 0 1 1-6.3 4H3l3.5-3.5L10 9H7.7A5 5 0 1 0 12 7V5z" fill="currentColor"/></svg>
+        <span>重新开始</span>
+      </button>
+      <button class="btn ghost" id="btnOpen2" title="打开其它作品 (Ctrl+O)">
+        <svg viewBox="0 0 24 24" width="14" height="14"><path d="M4 6h5l2 2h9v10H4V6z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/></svg>
+        <span>打开</span>
+      </button>
+      <button class="btn ghost" id="btnWorkId" title="按作品号播放 (Ctrl+L)">
+        <svg viewBox="0 0 24 24" width="14" height="14"><circle cx="12" cy="12" r="8.2" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M3.9 12h16.2M12 3.8c2.1 2.3 3.3 5.2 3.3 8.2s-1.2 5.9-3.3 8.2c-2.1-2.3-3.3-5.2-3.3-8.2S9.9 6.1 12 3.8z" fill="none" stroke="currentColor" stroke-width="1.4"/></svg>
+        <span>作品号</span>
+      </button>
+      <button class="btn ghost" id="btnFull" title="全屏 (F11)">
+        <svg viewBox="0 0 24 24" width="14" height="14"><path d="M4 9V4h5M20 15v5h-5M20 9V4h-5M4 15v5h5" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>
+        <span>全屏</span>
+      </button>
+      <span class="sep"></span>
+    </div>
+
+    <div class="winctrl">
+      <button class="wc" id="wcMin" title="最小化"><svg viewBox="0 0 12 12" width="10" height="10"><path d="M2 6h8" stroke="currentColor" stroke-width="1.1"/></svg></button>
+      <button class="wc" id="wcMax" title="最大化"><svg viewBox="0 0 12 12" width="10" height="10"><rect x="2.4" y="2.4" width="7.2" height="7.2" rx="1" fill="none" stroke="currentColor" stroke-width="1.1"/></svg></button>
+      <button class="wc close" id="wcClose" title="关闭"><svg viewBox="0 0 12 12" width="10" height="10"><path d="M2.6 2.6l6.8 6.8M9.4 2.6l-6.8 6.8" stroke="currentColor" stroke-width="1.2"/></svg></button>
+    </div>
+  </header>
+
+  <main class="main">
+    <section class="welcome" id="welcome">
+      <div class="glow g1"></div>
+      <div class="glow g2"></div>
+
+      <div class="welcome-inner">
+        <div class="hero">
+          <div class="hero-badge">KITTEN 4 · PLAYER</div>
+          <h1>专注于<span>播放</span>的作品运行器</h1>
+          <p>不加载编辑器，不做多余的事 —— 打开 <code>.bcm4</code> 作品，立即运行。</p>
+        </div>
+
+        <div class="dropcard" id="dropcard">
+          <div class="dropcard-inner">
+            <svg class="dropicon" viewBox="0 0 48 48" width="34" height="34" aria-hidden="true">
+              <path d="M24 32V13m0 0l-7 7m7-7l7 7" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+              <path d="M9 30v5a4 4 0 004 4h22a4 4 0 004-4v-5" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/>
+            </svg>
+            <div class="droptext">
+              <strong>把作品文件拖到这里</strong>
+              <span>支持 .bcm4 / .bcm 文件</span>
+            </div>
+            <button class="btn primary" id="btnOpen">选择文件</button>
+          </div>
+        </div>
+
+        <div class="onlinecard">
+          <div class="online-inner">
+            <span class="online-icon">
+              <svg viewBox="0 0 24 24" width="17" height="17" aria-hidden="true"><circle cx="12" cy="12" r="8.2" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M3.9 12h16.2M12 3.8c2.1 2.3 3.3 5.2 3.3 8.2s-1.2 5.9-3.3 8.2c-2.1-2.3-3.3-5.2-3.3-8.2S9.9 6.1 12 3.8z" fill="none" stroke="currentColor" stroke-width="1.4"/></svg>
+            </span>
+            <input id="workId" type="text" spellcheck="false" autocomplete="off"
+                   placeholder="输入作品号，或粘贴作品页链接">
+            <button class="btn primary" id="btnOnline">在线播放</button>
+          </div>
+          <div class="online-hint" id="onlineHint">支持作品号（如 335327306）、codemao 作品链接、PICKCAT 作品链接；打开过的作品会缓存到本地，断网也能重玩</div>
+        </div>
+
+        <div class="accountbar" id="accountBar">
+          <button class="acct-btn" id="btnLogin">
+            <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><circle cx="12" cy="8.4" r="3.6" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M4.8 19.6c.8-3.4 3.7-5.4 7.2-5.4s6.4 2 7.2 5.4" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>
+            <span>登录编程猫账号</span>
+          </button>
+          <span class="acct-note">登录后可打开自己的未公开作品</span>
+        </div>
+
+        <div class="recent" id="recentWrap" hidden>
+          <div class="recent-head">
+            <span>最近打开</span>
+            <button class="link" id="btnClearRecent">清空</button>
+          </div>
+          <div class="recent-list" id="recentList"></div>
+        </div>
+
+        <div class="foot-hint" id="footHint">
+          提示：安装版支持双击 <code>.bcm4</code> 文件直接用本播放器打开
+        </div>
+      </div>
+    </section>
+
+    <section class="stage" id="stage"></section>
+
+    <section class="notice" id="notice" hidden>
+      <div class="notice-card">
+        <div class="notice-icon">
+          <svg viewBox="0 0 24 24" width="22" height="22"><path d="M12 8.6v5.2M12 17.1v.1" stroke="currentColor" stroke-width="2.1" stroke-linecap="round"/><path d="M10.3 3.9L2.6 17.3a2 2 0 001.7 3h15.4a2 2 0 001.7-3L13.7 3.9a2 2 0 00-3.4 0z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/></svg>
+        </div>
+        <h2>这个文件暂时无法直接播放</h2>
+        <p class="notice-file" id="noticeFile"></p>
+        <p class="notice-why">文件里缺少运行所需的<b>编译产物</b>（<code>compile_result</code>）。<br>常见于由脚本生成、或被裁剪过的作品文件 —— 积木还在，但可执行代码没有被写入。</p>
+        <ol class="notice-steps">
+          <li>用 Kitten4 编辑器打开该文件</li>
+          <li>点一次「运行」，让编辑器完成编译</li>
+          <li>保存后，再用本播放器打开即可</li>
+        </ol>
+        <div class="notice-actions">
+          <button class="btn primary" id="btnEdit">在编辑器中打开</button>
+          <button class="btn ghost" id="btnNoticeOpen">选择其它文件</button>
+          <button class="btn ghost" id="btnNoticeBack">返回</button>
+        </div>
+      </div>
+    </section>
+
+    <div class="drop-overlay" id="dropOverlay">
+      <div class="drop-overlay-in"><span>松开鼠标即可播放</span></div>
+    </div>
+
+    <div class="toast" id="toast"></div>
+
+    <div class="modal" id="loginModal" hidden>
+      <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="loginTitle">
+        <h2 id="loginTitle">登录编程猫账号</h2>
+        <p class="modal-desc">登录后，作品请求会以你的账号身份发出，可以打开自己的未公开作品。<br>密码仅用于本次登录，<b>不会保存到本地</b>。</p>
+        <label class="field">
+          <span>账号</span>
+          <input id="loginId" type="text" spellcheck="false" autocomplete="username" placeholder="手机号或邮箱">
+        </label>
+        <label class="field">
+          <span>密码</span>
+          <input id="loginPwd" type="password" autocomplete="current-password" placeholder="密码">
+        </label>
+        <div class="modal-err" id="loginErr"></div>
+        <div class="modal-actions">
+          <button class="btn ghost" id="btnLoginCancel">取消</button>
+          <button class="btn primary" id="btnLoginSubmit">登录</button>
+        </div>
+      </div>
+    </div>
+  </main>
+</div>
+<script src="app.js"></script>
+</body>
+</html>

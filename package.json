@@ -1,0 +1,58 @@
+{
+  "name": "kitten4-player",
+  "version": "1.0.0",
+  "description": "Kitten4 纯播放器 —— 只做播放，不做编辑器",
+  "main": "src/main/main.js",
+  "author": "",
+  "license": "MIT",
+  "private": true,
+  "scripts": {
+    "start": "electron .",
+    "dev": "electron . --dev",
+    "dist": "electron-builder --win portable nsis",
+    "dist:portable": "electron-builder --win portable"
+  },
+  "devDependencies": {
+    "electron": "^33.0.0"
+  },
+  "build": {
+    "appId": "cn.kitten4.player",
+    "productName": "Kitten4播放器",
+    "directories": {
+      "output": "dist",
+      "buildResources": "assets"
+    },
+    "files": [
+      "src/**/*",
+      "assets/**/*",
+      "!**/node_modules/**"
+    ],
+    "win": {
+      "icon": "assets/icon.ico",
+      "target": [
+        { "target": "portable", "arch": ["x64"] },
+        { "target": "nsis", "arch": ["x64"] }
+      ]
+    },
+    "portable": {
+      "artifactName": "Kitten4-Player-${version}-portable.exe"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "artifactName": "Kitten4-Player-${version}-setup.exe"
+    },
+    "fileAssociations": [
+      {
+        "ext": "bcm4",
+        "name": "Kitten4 作品",
+        "description": "Kitten4 作品文件",
+        "icon": "icon.ico",
+        "role": "Player"
+      }
+    ]
+  }
+}

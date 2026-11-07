@@ -1,0 +1,129 @@
+<!DOCTYPE HTML>
+<html lang="zh-CN">
+<head>
+  <!--K4P_INJECT-->
+  <meta charset="utf-8">
+  <title>Kitten4 播放器</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no">
+  <meta name="full-screen" content="true">
+  <meta name="screen-orientation" content="landscape">
+  <meta name="x5-fullscreen" content="true">
+  <link rel="stylesheet" href="/kn/build/player_v2__3ffeebbd0c789e8d9422.css">
+  <style>
+    html, body { height: 100%; margin: 0; background: #000; overflow: hidden; }
+    #root { height: 100%; }
+    #k4p-boot {
+      position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
+      background: #0a0c10; color: #7f8ea3; font: 13px/1.6 system-ui, "Microsoft YaHei", sans-serif;
+      transition: opacity .35s ease; z-index: 9999; letter-spacing: .03em;
+    }
+    #k4p-boot.hide { opacity: 0; pointer-events: none; }
+    /* 桌面播放器：隐藏「登录后体验更棒」条与官网入口 */
+    .CUI-player-cover-user-info-bar { display: none !important; }
+    .CUI-player-menu-menu { display: none !important; }
+    .k4p-spin {
+      width: 22px; height: 22px; margin-right: 12px; border-radius: 50%;
+      border: 2px solid rgba(255,255,255,.12); border-top-color: #ff8a4c;
+      animation: k4p-rot .9s linear infinite;
+    }
+    @keyframes k4p-rot { to { transform: rotate(360deg); } }
+  </style>
+</head>
+<body>
+<div id="root"></div>
+<div id="k4p-boot"><div class="k4p-spin"></div><span>正在载入作品…</span></div>
+
+<script>
+  // 调试模式：保留绘制缓冲，便于外部读取画面（?k4p_debug=1）
+  if (/[?&]k4p_debug=1/.test(location.search)) {
+    var _gc = HTMLCanvasElement.prototype.getContext;
+    HTMLCanvasElement.prototype.getContext = function (type, attrs) {
+      if (type === 'webgl' || type === 'webgl2' || type === 'experimental-webgl') {
+        attrs = Object.assign({}, attrs || {}, { preserveDrawingBuffer: true });
+      }
+      return _gc.call(this, type, attrs);
+    };
+  }
+  // 调试模式 2：把被吞掉的 Promise 拒绝打到控制台
+  if (/[?&]k4p_debug=2/.test(location.search)) {
+    var _then = Promise.prototype.then;
+    Promise.prototype.then = function (ok, bad) {
+      var wrapped = typeof bad === 'function' ? function (e) {
+        try { console.warn('[k4p:reject]', (e && (e.stack || e.message)) || String(e)); } catch (_) {}
+        return bad.apply(this, arguments);
+      } : bad;
+      return _then.call(this, ok, wrapped);
+    };
+  }
+  // 调试模式 3：打印所有 XHR 目标地址
+  if (/[?&]k4p_debug=3/.test(location.search)) {
+    var _open = XMLHttpRequest.prototype.open;
+    XMLHttpRequest.prototype.open = function (m, u) {
+      try { console.warn('[k4p:xhr]', m, String(u).slice(0, 160)); } catch (_) {}
+      return _open.apply(this, arguments);
+    };
+  }
+  // 调试模式 4：记录所有 Error 构造（定位被吞掉的异常）
+  if (/[?&]k4p_debug=4/.test(location.search)) {
+    ['Error', 'TypeError', 'ReferenceError', 'RangeError', 'SyntaxError'].forEach(function (k) {
+      var O = window[k];
+      var W = function (msg) {
+        var e = new (Function.prototype.bind.apply(O, [null].concat([].slice.call(arguments))))();
+        try { console.warn('[k4p:newerr]', k, msg, (e.stack || '').split('\n').slice(1, 4).join(' | ')); } catch (_) {}
+        return e;
+      };
+      W.prototype = O.prototype;
+      W.captureStackTrace = O.captureStackTrace;
+      window[k] = W;
+    });
+  }
+  // 供外壳监测状态
+  window.__K4P__ = { ready: false, errors: [] };
+  window.addEventListener('error', function (e) {
+    try {
+      window.__K4P__.errors.push(String((e && e.message) || e));
+      console.error('[k4p]', e && e.message);
+    } catch (_) {}
+  });
+  window.addEventListener('unhandledrejection', function (e) {
+    try { console.error('[k4p:rejection]', e.reason && (e.reason.message || e.reason)); } catch (_) {}
+  });
+  // 自动开始播放：桌面播放器不应停在封面
+  (function autoStart() {
+    var t0 = Date.now();
+    var timer = setInterval(function () {
+      var btn = document.querySelector('.CUI-player-cover-play-btn');
+      if (btn) {
+        clearInterval(timer);
+        setTimeout(function () { try { btn.click(); } catch (e) {} }, 260);
+      } else if (Date.now() - t0 > 15000) {
+        clearInterval(timer);
+      }
+    }, 150);
+  })();
+
+  // 播放器渲染出内容后隐藏自绘的启动遮罩
+  (function () {
+    var t0 = Date.now();
+    var boot = document.getElementById('k4p-boot');
+    var timer = setInterval(function () {
+      var root = document.getElementById('root');
+      var done = root && (root.querySelector('canvas') || root.children.length > 0);
+      if (done || Date.now() - t0 > 12000) {
+        clearInterval(timer);
+        window.__K4P__.ready = true;
+        if (boot) { boot.classList.add('hide'); setTimeout(function () { boot.remove(); }, 400); }
+      }
+    }, 120);
+  })();
+</script>
+
+<!-- 本地作品预编译：把缺少 compile_result 的作品在页面侧补全（必须先于播放器加载） -->
+<script type="text/javascript" src="/k4p/compile.js"></script>
+<!-- 云数据身份：把在线作品号写进播放器状态，让云变量/排行榜连真实服务 -->
+<script type="text/javascript" src="/k4p/cloud.js"></script>
+<script type="text/javascript" src="/kn/build/player_v2.2d180c468559fbd29528.js"></script>
+<script type="text/javascript" src="/kn/build/runtime.f42f527f119e09010b85.js"></script>
+<script type="text/javascript" src="/kn/build/vendors.d00f4bd454a6352e9d71.js"></script>
+</body>
+</html>
