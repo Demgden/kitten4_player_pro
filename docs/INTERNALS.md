@@ -74,6 +74,48 @@ florr 实测「每帧用时」0.16 → 0~0.09。
 
 ---
 
+## 阶段 3：解释器自身的开销
+
+阶段 2 解决了「积木做什么」的成本（数值、调度），阶段 3 转而处理「解释器怎么调积木」的成本——每次都发生的通用路径。florr 采样里排名靠前的自时间：
+
+| 函数 | 占比 | 干什么 |
+|---|---|---|
+| `optifun` | 16.9% | 生成代码主循环，switch 派发 + `pc` 写回 |
+| `step_call_domain_function` | 11.1% | 每次积木调用都走的转发层 |
+| `get_list_id` | 8.0% | 列表积木每次改动都要反查「这个数组是哪个变量」 |
+| `do_step` | 7.6% | 每 tick 一次，含 `get_step_args` 的对象分配 |
+| `current_interpreter_must_yield` | 2.6% | 让出判定，连查 3 张表 |
+| `_wall_clock_now` | 2.0% | warp 循环每轮取时间 |
+
+`tools/patch_rt.js` 一共改 8 处，全部是解释器自身的方法，不碰生成代码、不碰作品数据：
+
+| 改动 | 做法 |
+|---|---|
+| `get_list_id` | 线性遍历全部变量（232 个）找数组引用 → `WeakMap` 反查缓存，命中后再校验 id 仍指向该数组 |
+| `_wall_clock_now` | 每次都查 `typeof performance` 和 `performance.now` → 首次绑定后直接调用 |
+| warp 时钟 | 每次迭代查一次 `performance.now()` → 每 64 次查一次（时间片 5 ms，损失可忽略） |
+| 数值分派 `f` | 快路径提到 `try` 外、字符串键查表换成三元链；NaN / ±Infinity 直接返回，不再 new 两个 Decimal |
+| `step_call_domain_function` | `Promise.resolve(o) === o` 每次都建一个 Promise → `o instanceof Promise` |
+| `must_yield` | 内联判定，`running_interpreter_was_blocked` / `running_group_changed` 都没变时直接短路 |
+| `step_after_potential_blocker` | 同上，省掉一次函数调用 + 两张表查询 |
+| `get_var_or_list` | 变量读两次 `this.variables[t]` → 读一次 |
+
+微基准（同一页面、同一变量表，10 万次平均）：
+
+| 函数 | 改前 | 改后 | 倍数 |
+|---|---|---|---|
+| `get_list_id`（常态，命中） | 5915 ns | **30 ns** | **197×** |
+| `wall_clock_now` | 609 ns | **83 ns** | 7.3× |
+| `get_var_or_list` | 38 ns | 32 ns | 1.2× |
+
+profile 里 `get_list_id`、`_wall_clock_now`、数值分派 `f`、`new Decimal` 全部从 Top 榜上消失。
+
+**一个顺带修掉的 bug**：`f` 里原来写着 `var r = Math.round(...)`，而 `r` 正是外面 Decimal 构造器的名字——`var` 提升把整个函数作用域的 `r` 都变成了局部变量，于是 `new r.Decimal(t)` 必然抛 `TypeError`，被 `catch` 吞掉后退回原生运算。也就是说**慢路径（decimal）从来没有生效过**。改名成 `rr` 之后才真正按语义走：只有结果为 NaN / ±Infinity 或操作数不是数字时才进 decimal。
+
+> 端到端 fps 不能用来衡量这一阶段：florr 的场景负载每次启动都不同（一局里敌人数量、刷新区块数都在变），同一份代码能跑出 23 fps 也能跑出 60 fps。只有微基准和「函数自时间占比」这两类指标跨运行可比。
+
+---
+
 ## 阶段 4：在线作品
 
 官方有个匿名可用的接口：

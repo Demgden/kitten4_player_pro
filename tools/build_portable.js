@@ -66,7 +66,9 @@ function main() {
   pkg.description = 'Kitten4 纯播放器';
   fs.writeFileSync(path.join(appDir, 'package.json'), JSON.stringify(pkg, null, 2), 'utf8');
 
-  copyDir(path.join(ROOT, 'src'), path.join(appDir, 'src'));
+  // 补丁备份（*.bak / *.orig / *.rt_orig / *.num_orig）与探针数据不进发行包
+  const skipJunk = (_s, name) => !/\.(bak|orig|num_orig|rt_orig)$/.test(name) && name !== '_k4probe.json';
+  copyDir(path.join(ROOT, 'src'), path.join(appDir, 'src'), skipJunk);
   copyDir(path.join(ROOT, 'assets'), path.join(appDir, 'assets'));
 
   console.log('写入使用说明…');

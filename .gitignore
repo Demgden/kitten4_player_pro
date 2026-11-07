@@ -12,6 +12,7 @@ _bench/
 *.bak
 *.orig
 *.num_orig
+*.rt_orig
 src/player/build/_k4probe.json
 
 # 本地产出笔记
