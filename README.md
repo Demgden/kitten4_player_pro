@@ -50,22 +50,26 @@
 
 ## 快速开始
 
-### 用现成的绿色版（推荐）
+### 用现成的绿色版
 
-```
-dist/Kitten4播放器/Kitten4播放器.exe
-```
-
-整个 `Kitten4播放器` 文件夹解压到任意位置，双击 exe 即可，不用安装、不写注册表。约 240 MB，体积主要是 Electron 运行时。
-
-详细的中文使用说明在同目录的 `使用说明.txt`。
-
-### 从源码跑
+仓库里不放打包产物（单个 exe 188 MB，超出 GitHub 限制）。在本机跑一次打包脚本：
 
 ```bash
 npm install
-npm start                       # 或 npm run dev，带开发者工具
-node tools/build_portable.js    # 重新生成 dist/Kitten4播放器/
+node tools/build_portable.js
+```
+
+产物在 `dist/Kitten4播放器/`，整个文件夹拷到任意位置，双击 `Kitten4播放器.exe` 即用，不必安装、不写注册表。约 240 MB，体积主要是 Electron 运行时。
+
+如果发布页（Releases）挂了附件，也可以直接下载解压，省去打包。
+
+详细的中文使用说明是同目录的 `使用说明.txt`（打包时自动生成）。
+
+### 从源码直接跑
+
+```bash
+npm install
+npm start          # 或 npm run dev，带开发者工具
 ```
 
 需要 Node 18+ 和 Windows。首次运行会下载 Electron（约 100 MB）。

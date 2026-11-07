@@ -176,6 +176,7 @@ tools/
 
 ## 踩过的坑（省得重踩）
 
+- **仓库不含 `.bak` / `.orig` / `.num_orig` 备份**（`.gitignore` 排除了），`patch_num.js restore` 在全新 clone 上会找不到源文件。要还原就先自己备份一份未打补丁的 bundle
 - **`Compiler` 不是代码生成器**，`OptiCompiler` 才是。而且补丁必须容器就绪后立刻装，不能挂在 `compileProject` 里（第二次加载会跳过编译）
 - **`instrument.js restore` 会冲掉数值补丁**（它用 `.bak` 覆盖 bundle），restore 之后要重跑 `patch_num.js apply`
 - **CDP 回传 MB 级对象会被 SIGTERM**，大对象一律 `POST /k4p/dump` 落盘
