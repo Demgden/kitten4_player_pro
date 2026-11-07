@@ -97,11 +97,143 @@
     return true;
   }
 
+  // ---------- 生成代码骨架优化（阶段3·optifun） ----------
+  /**
+   * 阶段2 只处理了 `X.EB` / `X.ED` 这两类"让出点"，但生成的 optifun 骨架里还有三块
+   * 纯开销，且只在源码层面才看得见：
+   *
+   *  1) 循环体（compile_repeat_forever 那条代码路径）压根没走 state 的方法，
+   *     直接吐 `if (X.EB('bid','rbid','ent',g,n)) { return; }case n:`。
+   *     EB 的实现是 `should_report_current_running_block && set_running_block(...),
+   *     program_counter[i]=r, false` —— 播放器里这个开关默认 false，等价于一次
+   *     纯 pc 写入。所以整段可以换成 `X.DB[g]=n;`。
+   *  2) 嵌套语句会连出好几段 `X.DB[g]=n;case n:` 中间什么都不干。只有最后一段
+   *     可能被命中（中间没有让出点，也没有别的跳转能到），前面的全是死写。
+   *  3) `X.DB[0]=n` 每次都先查一次 `X` 的属性表。把帧字段提到函数局部变量里，
+   *     写入就变成局部数组的写入。这是本轮最大的一头。
+   *
+   * 三条都只动"调度骨架"，不碰任何积木语义；case 标签只在确认无人跳转时才删。
+   */
+  var OPT = { enabled: true, fns: 0, saved: 0 };
+
+  /** 收集所有会跳到的 pc 号（X.EC 的最后一个参数就是让出后恢复的位置） */
+  function collectTargets(s) {
+    var refs = {};
+    var re = /X\.EC\([^()]*?,\s*(\d+),\s*(\d+)\)/g;
+    var m;
+    while ((m = re.exec(s))) {
+      (refs[m[1]] || (refs[m[1]] = {}))[m[2]] = 1;
+    }
+    return refs;
+  }
+
+  /** 折叠连续的纯 pc 写入：只保留最后一段（前面那些没有任何路径能到达） */
+  function collapseSkeleton(s, refs) {
+    var re = /X\.DB\[(\d+)\]=(\d+);case \2:[ \t]*/g;
+    for (var round = 0; round < 8; round++) {
+      var out = '';
+      var last = 0;
+      var m;
+      var changed = false;
+      re.lastIndex = 0;
+      while ((m = re.exec(s))) {
+        var g = m[1];
+        var n = +m[2];
+        var end = m.index + m[0].length;
+        // 紧跟其后的必须还是同一组的 pc 写入，才说明这段写进去马上就被覆盖
+        var next = /^X\.DB\[(\d+)\]=(\d+);case \2:/.exec(s.slice(end, end + 40));
+        if (!next || next[1] !== g) continue;
+        if (n === 0) continue;                          // 0 是 EE / reset 的入口，不能删
+        if (refs[g] && refs[g][n]) continue;            // 别处会跳到这个 case
+        out += s.slice(last, m.index);
+        last = end;
+        changed = true;
+      }
+      if (!changed) break;
+      s = out + s.slice(last);
+    }
+    return s;
+  }
+
+  /** 帧字段（X.DB / X.DA / X.BC / X.BA）提为函数局部变量 */
+  function hoistFrameFields(s) {
+    var used = [];
+    var t = s.replace(/\bX\.(DB|DA|BC|BA)\b/g, function (all, f) {
+      if (used.indexOf(f) < 0) used.push(f);
+      return f;
+    });
+    if (!used.length) return s;
+    var decl = used.map(function (f) { return f + '=X.' + f; }).join(',') + ';';
+    // 插在函数体最前面：optifun 的参数名固定是 X
+    var i = t.indexOf('function optifun(X) {');
+    if (i < 0) return s;
+    var at = i + 'function optifun(X) {'.length;
+    return t.slice(0, at) + 'var ' + decl + t.slice(at);
+  }
+
+  /** statements 是嵌套数组，官方用 lodash 的 flatten 再 join('')；这里等价实现 */
+  function flatJoin(x) {
+    if (typeof x === 'string') return x;
+    if (x == null) return '';
+    if (typeof x === 'object' && typeof x.length === 'number') {
+      var out = '';
+      for (var i = 0; i < x.length; i++) out += flatJoin(x[i]);
+      return out;
+    }
+    return String(x);
+  }
+
+  function transformOptifun(src) {
+    if (!OPT.enabled || typeof src !== 'string') return src;
+    if (src.indexOf('function optifun(X)') < 0) return src;
+    var s = src;
+
+    // 1) 循环体里的 EB 调用点 → 纯 pc 写入（EB 永不 yield）
+    s = s.replace(
+      /\bif \(X\.EB\([^()]*?,\s*(\d+),\s*(\d+)\)\) \{ return; \}/g,
+      function (all, g, n) { return 'X.DB[' + g + ']=' + n + ';'; }
+    );
+    // 2) ED 调用点 → 纯 pc 写入
+    s = s.replace(
+      /X\.ED\([^()]*?,\s*(\d+),\s*(\d+)\);/g,
+      function (all, g, n) { return 'X.DB[' + g + ']=' + n + ';'; }
+    );
+    // 3) 折叠死写（要在提局部之前做，正则只认 X.DB[ 这个写法）
+    if (s.indexOf('X.DB[') >= 0) s = collapseSkeleton(s, collectTargets(s));
+    // 4) 帧字段提局部
+    s = hoistFrameFields(s);
+
+    if (OPT.fns === 0) log('optifun 骨架改写已启用');
+    OPT.fns++;
+    OPT.saved += src.length - s.length;
+    return s;
+  }
+  // 供 A/B 对比用（不影响正常流程）
+  window.__k4pTransformOpt = transformOptifun;
+  window.__k4pOptSet = function (v) { OPT.enabled = !!v; return OPT.enabled; };
+
   /** 包一层 OptiCompiler.prototype.compile：首次调用时先建出 state 拿到生成器原型 */
   function installCodegenPatch(compilerInst) {
     if (CG.installed || !compilerInst) return;
     var proto = compilerInst.constructor && compilerInst.constructor.prototype;
     if (!proto || typeof proto.compile !== 'function' || typeof proto.wrap_with_top_level !== 'function') return;
+
+    // 挂到 wrap_with_top_level：这里是唯一能拿到「拼好的整段源码」的地方
+    var origWrap = proto.wrap_with_top_level;
+    proto.wrap_with_top_level = function () {
+      var r = origWrap.apply(this, arguments);
+      if (!OPT.enabled || !r || !r.statements) return r;
+      try {
+        var src = flatJoin(r.statements);
+        var out = transformOptifun(src);
+        if (out === src) return r;
+        return { statements: [out] };
+      } catch (e) {
+        log('骨架改写异常（保留官方生成）', (e && e.message) + '');
+        return r;
+      }
+    };
+
     var origCompile = proto.compile;
     proto.compile = function () {
       if (!CG.patched) {
@@ -348,6 +480,11 @@
   // 生成的（OptiCompiler.compile），而第二次加载已带 compile_result 时
   // compileProject 根本不会跑，所以不能只挂在编译流程里。
   (function autoInstallCodegen() {
+    // 骨架改写单独一个开关，方便和阶段2 分开做 A/B
+    var optOff = !!window.__k4pOptOff || /[?&]k4p_opt=0/.test(location.search);
+    if (!optOff) { try { optOff = localStorage.getItem('k4p_opt') === '0'; } catch (_) {} }
+    if (optOff) { OPT.enabled = false; log('optifun 骨架改写已关闭（k4p_opt=0）'); }
+
     var off = !!window.__k4pCGOff || /[?&]k4p_cg=0/.test(location.search);
     if (!off) { try { off = localStorage.getItem('k4p_cg') === '0'; } catch (_) {} }
     if (off) { CG.enabled = false; log('生成器补丁已关闭（k4p_cg=0）'); return; }

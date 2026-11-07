@@ -8,6 +8,9 @@ dist/
 _probe/
 _bench/
 
+# 本地测试作品（他人作品数据，不入库）
+examples/
+
 # 工具生成的备份与探针数据
 *.bak
 *.orig

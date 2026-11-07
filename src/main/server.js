@@ -55,6 +55,7 @@ class PlayerServer {
     this.workId = /^\d{3,12}$/.test(String(workId == null ? '' : workId)) ? String(workId) : '';
     this.token = crypto.randomBytes(8).toString('hex');
     this.compileCache = null;
+    this._prep = undefined;   // 预处理结果按作品缓存，换作品要清掉
     return this.playerUrl;
   }
 
@@ -237,6 +238,17 @@ class PlayerServer {
         });
         return res.end(this.compileCache.buf);
       }
+      // 文件自带 compile_result、但 scenes[].actors 还是空的（编辑器导出的半成品）：
+      // 页面侧不会再编译，这里必须先把运行时格式补齐，否则场景里没有角色层
+      const prep = this.prepareProject();
+      if (prep) {
+        res.writeHead(200, {
+          ...cors,
+          'Content-Type': 'application/json; charset=utf-8',
+          'Content-Length': prep.length,
+        });
+        return res.end(prep);
+      }
       // 否则返回原始文件，由页面侧负责编译
       const stream = fs.createReadStream(this.project.path);
       res.writeHead(200, { ...cors, 'Content-Type': 'application/json; charset=utf-8' });
@@ -257,6 +269,39 @@ class PlayerServer {
     const buf = Buffer.from(JSON.stringify(obj), 'utf8');
     res.writeHead(200, { ...cors, 'Content-Type': 'application/json; charset=utf-8', 'Content-Length': buf.length });
     res.end(buf);
+  }
+
+  /**
+   * 首次请求作品数据时的预处理：只处理「自带 compile_result 但场景缺 actors」的文件。
+   * 返回拼装好的 Buffer，或 null（表示原样输出，交给页面侧编译）。
+   */
+  prepareProject() {
+    if (this._prep !== undefined) return this._prep;
+    this._prep = null;
+    try {
+      const st = fs.statSync(this.project.path);
+      if (st.size > 64 * 1024 * 1024) return null;
+      const obj = JSON.parse(fs.readFileSync(this.project.path, 'utf8'));
+      if (!Array.isArray(obj.compile_result)) return null;      // 没有编译产物 → 交给页面侧
+      const th = obj.theatre;
+      if (!th || !th.scenes || !th.actors) return null;
+      let need = false;
+      for (const sid of Object.keys(th.scenes)) {
+        const sc = th.scenes[sid];
+        if (sc && (!Array.isArray(sc.actors) || !sc.actors.length)) { need = true; break; }
+      }
+      if (!need) return null;                                   // 已经是运行时格式
+      this.normalizeProject(obj);
+      for (const e of Object.values(th.scenes)) delete e.block_data_json;
+      for (const e of Object.values(th.actors)) delete e.block_data_json;
+      this._prep = Buffer.from(JSON.stringify(obj), 'utf8');
+      console.log('[k4p] 补齐场景角色层', (st.size / 1048576).toFixed(1) + 'MB → ' + (this._prep.length / 1048576).toFixed(1) + 'MB');
+      return this._prep;
+    } catch (e) {
+      console.warn('[k4p] 作品预处理跳过', e && e.message);
+      this._prep = null;
+      return null;
+    }
   }
 
   /**

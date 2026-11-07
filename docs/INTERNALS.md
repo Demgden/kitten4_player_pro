@@ -114,6 +114,68 @@ profile 里 `get_list_id`、`_wall_clock_now`、数值分派 `f`、`new Decimal`
 
 > 端到端 fps 不能用来衡量这一阶段：florr 的场景负载每次启动都不同（一局里敌人数量、刷新区块数都在变），同一份代码能跑出 23 fps 也能跑出 60 fps。只有微基准和「函数自时间占比」这两类指标跨运行可比。
 
+### 阶段 3b：生成代码的骨架（`optifun`）
+
+`optifun` 是 profile 里自时间最大的一项（16.9%），它本身不干游戏的事，只做 `switch` 派发和 `pc` 写回。看完实际生成的源码后，骨架里有三块可以砍：
+
+**一、循环体里还留着 `X.EB` 调用。** 阶段 2 只替换了 `state` 上的两个方法，而 `compile_repeat_forever` 那条路径是直接吐字符串的，压根没走它们：
+
+```js
+if (X.EB('bid', 'rbid', 'ent', 0, 23)) { return; }case 23:
+```
+
+`EB` 的实现是：
+
+```js
+step_before_expression(t, e, n, i, r) {
+  return this.should_report_current_running_block && this.run_mgr.set_running_block(n, t),
+         this.current_frame.program_counter[i] = r,
+         false
+}
+```
+
+播放器里 `should_report_current_running_block` 默认 `false`，`set_running_block` 只是给编辑器发 `block_running` 事件（播放器没有订阅者）。所以它**等价于一次纯 pc 写入 + 返回 false**，`if (...) return;` 是死分支。
+
+**二、嵌套语句连出一串空骨架。** 每层语句都会压一段 `pc` 写入，中间什么都不干：
+
+```js
+case 0: X.DB[0]=1;case 1: X.DB[0]=2;case 2: X.DB[0]=3;case 3: X.DA[1] = {};
+```
+
+只有最后一段可能被命中：中间没有让出点，跳转也只可能是「跳到该 case 然后立刻被下一段覆盖」。删掉前两段对语义没有影响（真跳到被删的 case，也只是顺势落到下一段、pc 重新对齐）。
+
+**三、`X.DB[0]=n` 每次都要查一次 `X` 的属性表。** 把帧字段提成函数局部变量即可：
+
+```js
+return function optifun(X) {var DB=X.DB,DA=X.DA,BC=X.BC,BA=X.BA;switch (DB[0]) {
+```
+
+帧对象是池化的：`frame.reset()` 会给 `program_counter` / `dynamic_data` 换新数组，但那发生在**调用开始前**（`interpreter.reset()` 建帧时），单次 `optifun` 执行期间这些引用不变，所以按调用取值是安全的。
+
+三条都实现在 `src/player/compile.js` 的 `transformOptifun()` 里，通过包住 `OptiCompiler.prototype.wrap_with_top_level` 拿到「拼好的整段源码」再改写（这是唯一能拿到全文的位置）。`?k4p_opt=0` 或 `localStorage.k4p_opt='0'` 可关闭，方便 A/B。
+
+测量（骨架是纯 CPU 循环，没有场景方差）：
+
+| 形态 | 每次遍历 300 块 | 相对官方 |
+|---|---|---|
+| 官方生成 | 0.170 ms | — |
+| 阶段 2（EB/ED 内联） | 0.187 ms | −8.9% |
+| ＋折叠空骨架 | 0.179 ms | −4.8% |
+| ＋折叠＋帧字段提局部 | 0.118 ms | **+44%** |
+| ＋再删裸 `X.DA[n]` 读 | 0.124 ms | +37%（无收益，已放弃这条） |
+
+再拿**真实生成代码**（不是合成）在页面里跑全量遍历，`new Function` 两份对比，`?k4p_opt=0` 时抓原始源码：
+
+| 函数大小 | 原始 | 改写后 | 提升 |
+|---|---|---|---|
+| 587 KB | 16.6 µs | 9.7 µs | +71% |
+| 305 KB | 1.75 µs | 1.20 µs | +46% |
+| 223 KB | 0.50 µs | 0.35 µs | +43% |
+
+结论：**收益几乎全来自「帧字段提局部」**，折叠骨架只占几个百分点，EB/ED 内联本身甚至是负的（函数调用被 V8 内联后比手写 store 还便宜），但它是折叠的前提（统一成 `X.DB[g]=n` 后才好扫），所以留着。
+
+一个副产品是生成源码小了约 12%（587 KB → 516 KB），`new Function` 的解析开销也跟着降。
+
 ---
 
 ## 阶段 4：在线作品
@@ -221,6 +283,7 @@ tools/
 - **仓库不含 `.bak` / `.orig` / `.num_orig` 备份**（`.gitignore` 排除了），`patch_num.js restore` 在全新 clone 上会找不到源文件。要还原就先自己备份一份未打补丁的 bundle
 - **`Compiler` 不是代码生成器**，`OptiCompiler` 才是。而且补丁必须容器就绪后立刻装，不能挂在 `compileProject` 里（第二次加载会跳过编译）
 - **`instrument.js restore` 会冲掉数值补丁**（它用 `.bak` 覆盖 bundle），restore 之后要重跑 `patch_num.js apply`
+- **自带 `compile_result` 但 `scenes[].actors` 为空的作品会卡在「初始化」**：页面侧看到有编译产物就跳过编译，`normalizeProject` 也就没机会补角色层。修法在 `server.js prepareProject()`——首次取作品数据时判断「有 compile_result 且哪个场景 actors 为空」，就地补齐后再返回（florr 21.7 MB → 10.5 MB）
 - **CDP 回传 MB 级对象会被 SIGTERM**，大对象一律 `POST /k4p/dump` 落盘
 - **截图要等 15~20 秒**，首帧加载图片资源慢，9 秒时可能还停在 `正在加载图片资源(0/174)`
 - 文件被占用时先 `taskkill //IM "Kitten4播放器.exe" //F`
