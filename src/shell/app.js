@@ -185,7 +185,12 @@ window.k4p.on('online-progress', (ev) => {
       ? `正在下载「${name}」… ${fmtMB(ev.loaded)} / ${fmtMB(ev.total)} MB`
       : `正在下载「${name}」… ${fmtMB(ev.loaded)} MB`, 'busy');
   } else if (ev.phase === 'save') setOnlineState(true, '正在保存到本地…', 'busy');
-  else if (ev.phase === 'cached') {
+  else if (ev.phase === 'localize') {
+    // 把造型图抓到本地（首次打开才需要），之后启动就不必再等图
+    setOnlineState(true, ev.total
+      ? `正在缓存造型素材… ${ev.loaded}/${ev.total}`
+      : '正在缓存造型素材…', 'busy');
+  } else if (ev.phase === 'cached') {
     setOnlineState(true, ev.offline ? '网络不可用，使用本地缓存…' : '已是最新版本，使用本地缓存…', 'busy');
   } else if (ev.phase === 'done') setOnlineState(true, '正在启动播放器…', 'busy');
 });
