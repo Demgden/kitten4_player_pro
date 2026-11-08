@@ -2,16 +2,13 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-Windows%20x64-lightgrey.svg)](#已知限制)
+[![Download:Release](https://img.shields.io/badge/License-MIT-green.svg)](Release)
 
 把 Kitten4（编程猫）作品当普通游戏玩：**本地 `.bcm4` 双击就开，作品号粘进输入框就能玩**，不用开编辑器，也不用先绕进社区网站。
-
-请在[Release](releases/tag/v1.0.0)下载文件
 
 ---
 
 ## 这是什么
-
-官方播放器本身是好的，问题在于它总被包在别的东西里：想玩线上的作品得先打开社区站（导航、推荐流、评论、金币一个不少），想玩自己存在电脑里的 `.bcm4` 则必须打开整个编辑器。
 
 这个项目把官方播放器（`player_v2`）搬到本地跑，外面套一个极小的壳：`一个窗口、一个首页、一个本地 HTTP 服务`，并对编译运行进行了一些优化。
 
