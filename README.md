@@ -2,7 +2,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-Windows%20x64-lightgrey.svg)](#已知限制)
-[![Download:Release](https://img.shields.io/badge/License-MIT-green.svg)](Release)
+[![Download:Release](https://img.shields.io/badge/Download-kitten4播放器-freen.svg)](https://github.com/Demgden/kitten4_player_pro/releases/latest)
 
 把 Kitten4（编程猫）作品当普通游戏玩：**本地 `.bcm4` 双击就开，作品号粘进输入框就能玩**，不用开编辑器，也不用先绕进社区网站。
 
