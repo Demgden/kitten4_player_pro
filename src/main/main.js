@@ -178,6 +178,29 @@ function sendToShell(channel, payload) {
  */
 function installAuthNetwork() {
   const ses = session.defaultSession;
+
+  // K4P_LOG 时统计作品素材（造型图）的加载情况：在线作品是把造型图放在 CDN 上的，
+  // 任何一张拉取失败都会让「加载资源」这一步整体中断，表现成部分造型没有纹理。
+  if (process.env.K4P_LOG) {
+    const stat = { ok: 0, fail: 0, err: [] };
+    const dump = () => {
+      if (!stat.ok && !stat.fail) return;
+      console.log('[k4p:cdn] 造型图 成功 ' + stat.ok + ' / 失败 ' + stat.fail);
+      for (const e of stat.err.slice(0, 8)) console.log('[k4p:cdn]   ' + e);
+    };
+    ses.webRequest.onCompleted({ urls: ['https://creation.bcmcdn.com/*'] }, (d) => {
+      if (d.statusCode >= 400 || d.statusCode === 0) {
+        stat.fail++;
+        if (stat.err.length < 20) stat.err.push(d.statusCode + ' ' + d.url.slice(-40));
+      } else stat.ok++;
+      if (stat.ok + stat.fail === 1) setTimeout(dump, 25000);
+    });
+    ses.webRequest.onErrorOccurred({ urls: ['https://creation.bcmcdn.com/*'] }, (d) => {
+      stat.fail++;
+      if (stat.err.length < 20) stat.err.push('ERR ' + d.error + ' ' + d.url.slice(-40));
+    });
+  }
+
   const setHeader = (headers, name, value) => {
     for (const k of Object.keys(headers)) {
       if (k.toLowerCase() === name.toLowerCase()) delete headers[k];
@@ -237,7 +260,10 @@ async function openProject(file, extra) {
     }
   }
 
-  const url = server.setProject(file, meta, on ? on.id : null);
+  // K4P_WORK_ID：调试用。给本地文件挂一个作品号，行为与在线播放完全一致
+  // （云数据、登录态都按线上走），用来隔离「在线/本地」两条链路的差异。
+  const workId = on ? on.id : (process.env.K4P_WORK_ID || null);
+  const url = server.setProject(file, meta, workId);
   setChrome(true);
   layout();
   playerView.setVisible(true);

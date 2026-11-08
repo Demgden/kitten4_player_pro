@@ -17,6 +17,7 @@
 const { app, net } = require('electron');
 const fs = require('fs');
 const path = require('path');
+const assets = require('./assets');
 
 const API = 'https://api-creation.codemao.cn';
 const PICKCAT_API = 'https://pickcat.dao3.fun/api/v1/works/';
@@ -121,8 +122,10 @@ function request(url, opts) {
   });
 }
 
-/** 作品信息；作品不存在/未公开时抛出带 code 的错误 */
-async function fetchWorkInfo(id, headers) {
+/** 造型图也走同一个下载通道（Chromium 网络栈，跟随系统代理） */
+assets.useRequester((url, opts) => request(url, { timeoutMs: (opts && opts.timeoutMs) || 30000 }));
+
+/** 作品信息；作品不存在/未公开时抛出带 code 的错误 */async function fetchWorkInfo(id, headers) {
   const r = await request(API + '/kitten/r2/work/player/load/' + encodeURIComponent(id), {
     timeoutMs: INFO_TIMEOUT,
     headers: headers || undefined,
@@ -209,6 +212,33 @@ class OnlineWorks {
   }
 
   /**
+   * 造型离线化：把 CDN 造型图内联成 data URI，只做一次。
+   * 做完之后云端作品和本地 .bcm4 完全等价 —— 启动不用等 155 张图、不依赖 CDN。
+   */
+  async localize(id, meta, send) {
+    if (meta && meta.stylesLocal) return meta;
+    const file = this.filePath(id);
+    send({ phase: 'localize', id, loaded: 0, total: 0 });
+    let r = { changed: false, ok: 0, fail: 0, total: 0 };
+    try {
+      r = await assets.localizeProjectFile(file, (done, total) => {
+        if (done === total || done % 20 === 0) send({ phase: 'localize', id, loaded: done, total });
+      });
+    } catch (_) {}
+    // 一张都没下成功就别标记，下次打开再试
+    const next = {
+      ...(meta || {}),
+      stylesLocal: r.changed || (r.total > 0 && r.ok > 0),
+      stylesFail: r.fail || 0,
+    };
+    try {
+      if (fs.existsSync(file)) next.size = fs.statSync(file).size;
+      fs.writeFileSync(this.metaPath(id), JSON.stringify(next, null, 2));
+    } catch (_) {}
+    return next;
+  }
+
+  /**
    * 拉一个在线作品到本地缓存。
    * @param {string} input 作品号或作品链接
    * @param {(ev:object)=>void} emit 进度回调
@@ -244,11 +274,10 @@ class OnlineWorks {
     // 版本没变就直接用缓存：作品数据通常几 MB，网络差时这一下能省掉大半等待
     if (meta && meta.sourceUrl === latest) {
       send({ phase: 'cached', id, name: info.name || meta.name });
-      return {
-        path: this.filePath(id),
-        meta: { ...meta, name: info.name || meta.name, via: src.via, pickcatUuid: src.uuid || meta.pickcatUuid || '' },
-        cached: true,
-      };
+      const merged = { ...meta, name: info.name || meta.name, via: src.via, pickcatUuid: src.uuid || meta.pickcatUuid || '' };
+      // 老缓存里造型还是 CDN 链接：顺手离线化一次（只做一次）
+      const done = await this.localize(id, merged, send);
+      return { path: this.filePath(id), meta: done, cached: true };
     }
 
     send({ phase: 'download', id, name: info.name, loaded: 0, total: 0 });
@@ -290,8 +319,11 @@ class OnlineWorks {
       pickcatUuid: src.uuid || '',
     };
     fs.writeFileSync(this.metaPath(id), JSON.stringify(next, null, 2));
-    send({ phase: 'done', id, name: next.name, size: next.size });
-    return { path: file, meta: next, cached: false };
+
+    // 造型图内联（走本地磁盘缓存，第二次打开就不再联网）
+    const done = await this.localize(id, next, send);
+    send({ phase: 'done', id, name: done.name, size: done.size });
+    return { path: file, meta: done, cached: false };
   }
 }
 
