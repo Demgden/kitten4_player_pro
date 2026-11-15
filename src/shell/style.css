@@ -84,6 +84,8 @@ html, body {
   transition: background .14s, color .14s, border-color .14s, transform .1s;
 }
 .btn:hover { background: rgba(255, 255, 255, 0.065); color: #e9edf3; }
+.btn.on { background: rgba(255, 138, 76, .16); color: #ffb07a; border-color: rgba(255, 138, 76, .34); }
+.btn.on:hover { background: rgba(255, 138, 76, .22); color: #ffc398; }
 .btn:active { transform: translateY(1px); }
 .btn.primary {
   background: linear-gradient(140deg, #ff8a4c, #ff6a45);

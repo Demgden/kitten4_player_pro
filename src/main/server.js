@@ -150,6 +150,16 @@ class PlayerServer {
       return res.end('// missing');
     }
 
+    // 运行信息面板（页面侧，见 src/player/profiler.js）
+    if (url === '/k4p/profiler.js') {
+      const file = path.join(this.playerDir, 'profiler.js');
+      if (ff(file)) {
+        return this.sendFile(res, file, cors, { 'Content-Type': 'application/javascript; charset=utf-8' });
+      }
+      res.writeHead(404, { ...cors, 'Content-Type': 'application/javascript' });
+      return res.end('// missing');
+    }
+
     // 页面侧编译结果回传：接到后拼装成「完整作品」，下一次加载走原生路径
     if (url === '/k4p/compile-result' && req.method === 'POST') {
       const chunks = [];

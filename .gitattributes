@@ -1,0 +1,10 @@
+# 统一按 LF 存储：GitHub 网页上传曾把一批文件写成 CRLF，
+# 导致每次比对整文件变化、合并必冲突。
+* text=auto eol=lf
+
+# 二进制
+*.png binary
+*.jpg binary
+*.ico binary
+*.exe binary
+*.bcm4 binary

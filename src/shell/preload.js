@@ -9,6 +9,7 @@ contextBridge.exposeInMainWorld('k4p', {
   reload: () => ipcRenderer.invoke('reload-player'),
   closeProject: () => ipcRenderer.invoke('close-project'),
   toggleFullscreen: () => ipcRenderer.invoke('toggle-fullscreen'),
+  toggleProfiler: () => ipcRenderer.invoke('toggle-profiler'),
   setChrome: (v) => ipcRenderer.invoke('set-chrome', v),
   minimize: () => ipcRenderer.invoke('win-minimize'),
   maximize: () => ipcRenderer.invoke('win-maximize'),
@@ -25,7 +26,7 @@ contextBridge.exposeInMainWorld('k4p', {
     try { return webUtils.getPathForFile(file); } catch (_) { return ''; }
   },
   on: (channel, cb) => {
-    const allowed = ['state', 'project-opened', 'project-closed', 'error', 'player-crashed', 'player-log', 'chrome-visible', 'not-playable', 'online-progress', 'goto-workid', 'auth-changed'];
+    const allowed = ['state', 'project-opened', 'project-closed', 'error', 'player-crashed', 'player-log', 'chrome-visible', 'not-playable', 'online-progress', 'goto-workid', 'auth-changed', 'profiler-reset'];
     if (!allowed.includes(channel)) return () => {};
     const h = (_e, payload) => cb(payload);
     ipcRenderer.on(channel, h);

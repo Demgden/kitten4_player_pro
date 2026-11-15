@@ -90,6 +90,7 @@ function enterPlaying(p) {
   $('chipTitle').textContent = p.title || p.name || '作品';
   $('chipTitle').title = p.path;
   $('toolbar').hidden = false;
+  $('btnProf').classList.remove('on');
   $('footHint').hidden = true;
 }
 
@@ -98,6 +99,7 @@ function enterWelcome() {
   welcome.classList.remove('hidden');
   $('fileChip').hidden = true;
   $('toolbar').hidden = true;
+  $('btnProf').classList.remove('on');
   $('footHint').hidden = false;
 }
 
@@ -109,6 +111,14 @@ $('btnReload').addEventListener('click', async () => {
   if (!ok) toast('当前没有正在播放的作品', true);
 });
 $('btnFull').addEventListener('click', () => window.k4p.toggleFullscreen());
+$('btnProf').addEventListener('click', async () => {
+  const r = await window.k4p.toggleProfiler();
+  if (!r || !r.ok) {
+    toast(r && r.reason === 'not-ready' ? '播放器还在加载，稍等一下再试' : '当前没有正在播放的作品', true);
+    return;
+  }
+  $('btnProf').classList.toggle('on', !!r.on);
+});
 $('wcMin').addEventListener('click', () => window.k4p.minimize());
 $('wcMax').addEventListener('click', () => window.k4p.maximize());
 $('wcClose').addEventListener('click', () => window.k4p.closeWindow());
@@ -353,6 +363,7 @@ window.k4p.on('project-closed', () => { hideNotice(); enterWelcome(); setOnlineS
 window.k4p.on('error', (e) => toast(e && e.message ? e.message : '打开失败', true));
 window.k4p.on('player-crashed', () => toast('播放器进程异常退出，请重新打开作品', true));
 window.k4p.on('goto-workid', () => { gotoWorkId(); });
+window.k4p.on('profiler-reset', () => { $('btnProf').classList.remove('on'); });
 window.k4p.on('player-log', (msg) => { if (/error|fail/i.test(String(msg))) console.warn('[player]', msg); });
 window.k4p.on('chrome-visible', (v) => {
   document.documentElement.classList.toggle('chrome-hidden', !v);

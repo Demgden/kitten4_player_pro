@@ -22,8 +22,17 @@ const assets = require('./assets');
 const API = 'https://api-creation.codemao.cn';
 const PICKCAT_API = 'https://pickcat.dao3.fun/api/v1/works/';
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Kitten4Player';
-const INFO_TIMEOUT = 20000;
+const INFO_TIMEOUT = 8000;      // 以前 20s：断网时 Chromium 要等连接超时才报错，用户体感是「卡死」
 const FILE_TIMEOUT = 120000;
+
+/**
+ * Chromium 的网络状态。关 Wi-Fi / 拔网线时立刻为 false，不用等超时。
+ * K4P_OFFLINE=1 可手动模拟断网，方便测离线路径。
+ */
+function isOnline() {
+  if (process.env.K4P_OFFLINE === '1') return false;
+  try { return net.isOnline(); } catch (_) { return true; }
+}
 
 // PICKCAT（pickcat.dao3.fun）不是独立的作品站，它只是把 codemao 作品包了一层：
 // /api/v1/works/<uuid> 里的 sourceWorkId 就是原作品号，前端最终也是拼
@@ -217,6 +226,8 @@ class OnlineWorks {
    */
   async localize(id, meta, send) {
     if (meta && meta.stylesLocal) return meta;
+    // 断网时别去抓那 155 张造型图：每张都要等超时，看着像卡死
+    if (!isOnline()) return meta || null;
     const file = this.filePath(id);
     send({ phase: 'localize', id, loaded: 0, total: 0 });
     let r = { changed: false, ok: 0, fail: 0, total: 0 };
@@ -246,6 +257,17 @@ class OnlineWorks {
    */
   async fetch(input, emit) {
     const send = (o) => { if (emit) { try { emit(o); } catch (_) {} } };
+
+    // 断网先判决：解析链接 / 拉信息都会卡在超时上，有缓存就直接播缓存
+    if (!isOnline()) {
+      const guess = parseWorkId(input);
+      const hit = guess ? this.getMeta(guess) : null;
+      if (hit) {
+        send({ phase: 'cached', id: guess, name: hit.name, offline: true, reason: '网络未连接' });
+        return { path: this.filePath(guess), meta: hit, cached: true, offline: true };
+      }
+      throw new Error('网络未连接' + (guess ? '，这个作品还没有本地缓存，请联网后再打开一次' : '，无法解析作品链接'));
+    }
 
     send({ phase: 'resolve' });
     const src = await resolveInput(input);
@@ -327,4 +349,4 @@ class OnlineWorks {
   }
 }
 
-module.exports = { OnlineWorks, parseWorkId, resolveInput, fetchWorkInfo };
+module.exports = { OnlineWorks, parseWorkId, resolveInput, fetchWorkInfo, isOnline };

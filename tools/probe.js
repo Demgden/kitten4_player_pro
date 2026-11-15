@@ -105,7 +105,8 @@ async function waitTargets() {
     child = spawn(argv[0], argv[1], {
       cwd: opt.dev ? ROOT : path.dirname(EXE),
       env,
-      stdio: 'ignore',
+      // K4P_LOG 时把主进程日志直接接到当前终端（默认吞掉，免得刷屏）
+      stdio: process.env.K4P_LOG ? 'inherit' : 'ignore',
       detached: false,
     });
   }

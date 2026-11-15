@@ -195,6 +195,8 @@ PICKCAT 链接要先多解析一步：`GET pickcat.dao3.fun/api/v1/works/<uuid>`
 
 实现上用 Electron 的 `net` 模块发请求（走 Chromium 网络栈，自动跟随系统代理和证书），下载先写 `.tmp` 再 rename，每次打开都比对 `source_urls[0]` 与本地记录的 `sourceUrl` 决定是否重下。
 
+**断网优先**：`net.isOnline()` 为 false 时直接走缓存，不发任何请求（否则每个请求都要等连接超时才报错，体感是卡死）；造型离线化也会跳过。信息接口超时 8s（原来 20s），失败后同样退回上次的副本。`K4P_OFFLINE=1` 可手动模拟断网。
+
 ---
 
 ## 阶段 5：登录与云数据
@@ -212,7 +214,9 @@ work_id && is_login && 作品声明了云变量 && auth_type
 
 我们直接把 `/new/<token>` 当顶层文档加载，没有父页面替它 postMessage，作品又是从本地 JSON 读的，所以 **`work_id` 恒为空**——登录了也没用。`is_login` / `auth_type` 播放器自己请求 `/web/users/details` 就有了，不用管。
 
-补法：`src/player/cloud.js` 轮询到内核就绪后 `dispatch(set_work_id)`，登录状态下再补一次云变量初始化。同时 `client_config.json` 里的 `cloud_storage_api` 在登录时指回官方域名（未登录仍指本地，否则会卡住）。
+补法：`src/player/cloud.js` 轮询到内核就绪后 `dispatch(set_work_id)`。**但只写一次不够**——播放器加载作品时会把 `project_states` 整个重置（实测写入后 33ms 被覆盖），而云数据入口 `Ct()`（模块 `TL4g` 导出 `d`）只判一次、不重试，读到空值就锁死成预览模式。所以在 `store.dispatch` 外面包一层：任何 action 落地后 `work_id` 若被清掉就立刻补回。同时 `client_config.json` 里的 `cloud_storage_api` 在登录时指回官方域名（未登录仍指本地，否则会卡住）。
+
+> 别用 `__k4wreq('vxpV').m(true)` 事后补云变量：它就是整条 run 流程，会重建运行时/渲染容器，把「盖章」画到画笔层的内容全部擦掉（florr 的花瓣卡槽变灰白就是这么来的）。
 
 验证到 `CmCloud.socket.is_connected === true`、WS 地址里 `session_id` 等于作品号，就算真连上了。
 
@@ -235,6 +239,35 @@ florr（335327306，7.6 MB，15 个实体），12 秒采样：
 
 ---
 
+## 运行信息面板
+
+标题栏「运行信息」（或播放中按 F9）在播放器页面右侧挂一个浮层，实时显示当前作品跑得怎么样。它挂的是**运行时自己的方法**，不解析生成代码，所以对「有积木数据」和「只剩编译产物」的作品都一样能用。
+
+| 指标 | 取法 |
+|---|---|
+| 帧率 | `run_mgr.update` 的调用次数 / 实际经过时间（逻辑帧，跟下面的 ms 同一口径） |
+| 脚本 / 帧 | `run_mgr.update` 包一层计时，窗口内均值；峰值放在 tooltip |
+| 执行积木 | `interpreter.step_outputs.after_potential_blocker`（生成代码里的 `X.EC`）每个积木被调用一次，窗口内累计 ÷ 帧数 |
+| 角色占比 | `OptiRunner.do_step` 的耗时按 `interp.metadata.typeclass_id` 归并 → 克隆体算在同一个角色下 |
+| 角色内函数 | 同一次 `do_step` 的耗时归给栈顶 `proc_id`（自身）；栈上每个 `proc_id` 都累加（含子调用） |
+| 其他开销 | `脚本/帧 − Σ角色`，即 update 内部除解释器之外的部分（任务调度、事件派发），面板里标成「其中·引擎与调度」 |
+| 帧内空转 | `1000/帧率 − 脚本/帧`，update 之外（渲染合成、脚本让出后的空闲） |
+
+几个实现上的取舍：
+
+- **只在面板打开时打补丁**：`hide()` 会把 `prototype.update` / `_step` / `do_step` 原样放回去，并把每个解释器 `step_outputs` 里换过的 `EC` / `EA` 恢复成原引用。关闭后零开销，这点用 `proto.update === orig`、`it.step_outputs.proc_call === raw` 验证过。
+- **`do_step` 用「切换结算」而不是逐次取时间**：一次 `do_step` 只执行「栈顶函数的一段脚本」。计时只在栈顶 `proc_id` 变化或 `_step` 结束时取一次 `performance.now()`，把这段区间记给当时的函数。不这么做的话每次 `do_step` 要两次 `now()`（florr 每帧 2400 次），面板开着会吃掉 20% 帧率。
+- **`step_outputs` 必须逐实例替换**：解释器构造时就把 `step_after_potential_blocker` 等 `.bind(this)` 存进 `step_outputs`，改原型对已有实例无效；新建的解释器在 `_step` 里补一次包装。
+- **按 `typeclass_id` 而不是 `interpreter_id`**：florr 花瓣、子弹这类克隆体每个都是独立解释器，按解释器分组会得到一屏同名条目；按 typeclass 归并才是「这个角色一共吃了多少」。
+- **`proc_id` 就是函数名**（`"墙碰撞"` / `"函数3"`，主脚本是 `__main__`），不需要额外的名字表。
+- **不用 rAF 算帧率**：rAF 频率反映的是浏览器合成帧率，作品逻辑 tick 可能远低于它（实测面板里 rAF 60 fps、逻辑 22 fps 同时出现）。用 update 次数除以实际耗时才能和「脚本/帧」对上：`脚本 + 其他 + 空转 ≈ 1000/帧率`。
+- **角色超过 10 个合并成「其余 N 个角色」**，每个角色只展开前 8 个函数，面板不会被撑成一根长条；角色行可点，默认展开最耗时的那个。
+- 面板本身是 Shadow DOM，不吃播放器页面的全局样式；外层容器 `pointer-events:none`，只有面板本体接收鼠标。
+
+对外入口：`window.__k4pProf.show() / hide() / toggle() / snapshot()`；壳侧的 `toggle-profiler` IPC 只是转发一次 `toggle()`。`snapshot()` 返回 `{frame, roles: {tc: {ms, blk, fns: {pid: {self, inc, n}}}}, blocks}`，方便外部脚本直接取数。
+
+---
+
 ## 目录结构
 
 ```
@@ -248,6 +281,7 @@ src/
     page.html    播放器宿主页（遮罩、自动点播放、隐藏登录条）
     compile.js   页面侧预编译器 + OptiCompiler 代码生成补丁
     cloud.js     注入 work_id，让云数据从模拟切到真实 socket
+    profiler.js  运行信息面板（按需给 run_mgr.update / _step 计时，按角色归并）
     build/       官方 player_v2 全套构建产物（已打补丁）
   shell/         自绘标题栏 + 欢迎页 + 登录弹窗
 tools/
@@ -275,6 +309,7 @@ tools/
 | `?k4p_debug=4` | 记录每次 `Error` 构造，定位被吞的异常 |
 | `?k4p_cg=0` / `localStorage.k4p_cg='0'` | 关掉代码生成器补丁，用于 A/B 对比 |
 | `window.__k4pNative(0)` | 数值层回退到 decimal 原实现（`1` 切回全原生） |
+| `F9` / 标题栏「运行信息」 | 开关右侧运行信息面板（`window.__k4pProf`） |
 
 ---
 

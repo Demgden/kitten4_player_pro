@@ -3,7 +3,7 @@ const { app, BrowserWindow, WebContentsView, ipcMain, dialog, shell, Menu, nativ
 const path = require('path');
 const fs = require('fs');
 const { PlayerServer } = require('./server');
-const { OnlineWorks, resolveInput } = require('./online');
+const { OnlineWorks, resolveInput, parseWorkId, isOnline } = require('./online');
 const { Auth, applyCookies } = require('./auth');
 
 const PLAYER_DIR = path.join(__dirname, '..', 'player');
@@ -354,6 +354,13 @@ function registerIpc() {
   // 只解析作品号、不下载（用于输入框即时校验/取作品名）
   ipcMain.handle('resolve-work', async (_e, input) => {
     try {
+      // 断网时别去请求接口：数字作品号本地就能解析，能命中缓存就照样给名字
+      if (!isOnline()) {
+        const guess = parseWorkId(input);
+        if (!guess) return { ok: false, message: '网络未连接，无法解析作品链接' };
+        const meta = online.getMeta(guess);
+        return { ok: true, id: guess, cached: !!meta, name: (meta && meta.name) || '', via: 'codemao', offline: true };
+      }
       const src = await resolveInput(input);
       const meta = online.getMeta(src.id);
       return { ok: true, id: src.id, cached: !!meta, name: (meta && meta.name) || src.name || '', via: src.via };
@@ -366,6 +373,7 @@ function registerIpc() {
     if (!current) return false;
     const url = server.playerUrl + '?t=' + Date.now();
     await playerView.webContents.loadURL(url);
+    sendToShell('profiler-reset');   // 页面重载后运行信息面板已重置，按钮状态跟着复位
     return true;
   });
 
@@ -378,6 +386,21 @@ function registerIpc() {
   });
 
   ipcMain.handle('set-chrome', (_e, v) => { setChrome(!!v); layout(); return v; });
+
+  // 运行信息面板：真正绘制它的是播放器页面（右侧浮层），这里只负责转发一次 toggle
+  ipcMain.handle('toggle-profiler', async () => {
+    if (!current || !playerView) return { ok: false, on: false, reason: 'no-project' };
+    try {
+      const on = await playerView.webContents.executeJavaScript(
+        "(function(){var p=window.__k4pProf;if(!p)return null;p.toggle();return p.isOn();})()",
+        true
+      );
+      if (on === null || on === undefined) return { ok: false, on: false, reason: 'not-ready' };
+      return { ok: true, on: !!on };
+    } catch (e) {
+      return { ok: false, on: false, reason: 'error', message: String((e && e.message) || e) };
+    }
+  });
 
   ipcMain.handle('win-minimize', () => win.minimize());
   ipcMain.handle('win-maximize', () => {
@@ -399,6 +422,7 @@ function registerIpc() {
     // 已登录后用户信息换了：有正在播放的作品就重新载入，让标题栏/头像立刻生效
     if (current) {
       try { await playerView.webContents.loadURL(server.playerUrl + '?t=' + Date.now()); } catch (_) {}
+      sendToShell('profiler-reset');
     }
     return r;
   });
@@ -411,6 +435,7 @@ function registerIpc() {
     sendToShell('auth-changed', st);
     if (current) {
       playerView.webContents.loadURL(server.playerUrl + '?t=' + Date.now()).catch(() => {});
+      sendToShell('profiler-reset');
     }
     return st;
   });
@@ -426,6 +451,12 @@ function registerIpc() {
   ipcMain.on('player-key', (_e, action) => {
     if (action === 'fullscreen') { win.setFullScreen(!win.isFullScreen()); return; }
     if (action === 'workid') { sendToShell('goto-workid'); return; }
+    if (action === 'profiler') {
+      if (playerView) playerView.webContents.executeJavaScript(
+        "(function(){var p=window.__k4pProf;if(p)p.toggle();return !!(p&&p.isOn());})()", true
+      ).catch(() => {});
+      return;
+    }
     if (action === 'open') dialog.showOpenDialog(win, {
       title: '打开作品',
       filters: [{ name: 'Kitten4 作品', extensions: ['bcm4', 'bcm'] }, { name: '所有文件', extensions: ['*'] }],
