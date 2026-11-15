@@ -222,6 +222,67 @@ work_id && is_login && 作品声明了云变量 && auth_type
 
 ---
 
+## 阶段 6：编辑器（源码编辑器 4.11.20）性能副本
+
+播放器这边优化完之后，顺手对**官方桌面编辑器**做了同一件事的轻量版。产物是 `dist/Kitten4编辑器/`
+（从 `C:\Program Files\kitten4-desktop` 整份复制后打补丁，安装版本身不动）。
+
+触发问题是「一个角色里积木特别多」时的卡顿 + 改值后出现「神秘状态」。定位下来是三处慢路径：
+
+| # | 位置 | 原实现 | 代价 |
+|---|---|---|---|
+| 1 | `Block.prototype.get_descendants` | 递归 + 每层 `push.apply` 拷贝子数组 | 5000 块链 ≈ 1250 万次 push |
+| 2 | `Block.prototype.block_to_json` / `workspace_to_json` | 每层递归 `merge_workspace_data` 把**整棵子树**并进父对象 | 5532 块一次 **395 ms**（改一个值就会触发） |
+| 3 | 切角色加载 | `if(块数>=1e3) setTimeout(...,200) else select_workspace()` | 加载与编辑抢同一工作区；异常被 `console.log` 吞 → 值错乱 / 工作区空白 |
+
+补法（`tools/patch_editor.js`，幂等，自动留 `.k4p.bak`）：
+
+- `get_descendants` 改**显式栈迭代**，同级顺序不变（这棵树是 Blockly 的位置基准，顺序错了整块会错位）。
+- 序列化走 `src/editor/perf.js`（运行时注入成 `build/k4p-perf.js`）：用 `Object.create(Block.prototype)` 造一个 stub，
+  让 `block_to_json` 只吐「自己这一层」，再用 `ws.get_block_by_id()` 迭代拼 connections —— 单遍收集。
+- 切工作区 `200` → `0`（只让出一帧把加载提示画出来）；失败重试一次并 `console.error`，不再静默。
+- `main/index.js` 头部补四个启动开关（`disable-renderer-backgrounding` / `disable-background-timer-throttling` /
+  `enable-gpu-rasterization` / `ignore-gpu-blocklist`）。
+
+> **绝对不要加 `--js-flags=--max-old-space-size=4096`**：这个 Electron 版本（33）加了这个开关页面会直接卡死
+> （`alive` eval 一直超时、GPU/Network Service 一起崩）。试过，排除。
+
+实测（5513 块的 chipmunk2d「物理」角色）：
+
+| 指标 | 官方 | 副本 |
+|---|---|---|
+| 一次 `workspace_to_json` | 395 ms | **100 ms** |
+| 输出差异 | — | **0**（`block/conn/cmt` 逐字节一致） |
+| 合成 `json_to_workspace` | 7.4 s | 6.0 s |
+| 连续改 5 个值 | `[12598, 268, 105, 186, 217]` ms，>40ms 卡顿 60 次 | `[11500, 147, 135, 133, 165]` ms，卡顿 36 次 |
+| 渲染像素 | — | 与官方截图**逐像素一致** |
+
+第一次改值仍要 11~14 s，profile 里 **97.6% 是 `(program)` / `(none)`**（非 JS：layout/style/IPC），
+也就是「第一次把整个工程写回磁盘」+ 全量重排，不是 JS 能救的。
+
+### 用户问的「是不是渲染了太多不必要的积木」——是
+
+`render_blocks_and_comments` 对每个顶层块做 `get_descendants()` 然后：
+
+```js
+for (…) init_svg();          // 建 DOM
+for (…) update_collapsed(), render(false);   // 全部排版
+```
+
+5513 块 → **37814 个 SVG 节点全部建出来并排版**，而视口里同时可见的只有几十块。
+这只是「打开时 6 秒」的主因之一，但**没做裁剪**：这套 Blockly 是 Codemao 自改过的
+（没有 `initSvg` / `renderDraw_` / `getViewportBBox`，是 `init_svg` / `block_to_dom` / `render`），
+裁剪需要「先量高再决定建不建」，而量高本身依赖 `init_svg`，只有折叠块才有现成的
+`set_visible_as_child(false)` 可用。硬做会踩拖拽吸附、连接点定位、滚动条度量一整套，
+风险与收益不匹配，所以这一版只做了上面四处。
+
+调试：控制台 `window.__k4pPerf.snapshot()` 看 `{applied, serializeMs, lastBlocks}`；
+`[k4p]` 前缀日志都出自这一层。
+
+> 副本与安装版**共用** `%APPDATA%\electron_for_kitten4`，所以两边不能同时开（单实例锁会切回先开的那个）。
+
+---
+
 ## 性能数据
 
 florr（335327306，7.6 MB，15 个实体），12 秒采样：
@@ -291,12 +352,15 @@ src/
     profiler.js  运行信息面板（按需给 run_mgr.update / _step 计时，按角色归并）
     build/       官方 player_v2 全套构建产物（已打补丁）
   shell/         自绘标题栏 + 欢迎页 + 登录弹窗
+  editor/
+    perf.js      注入官方编辑器 bundle 的 workspace_to_json 单遍收集（副本用）
 tools/
   build_portable.js  生成绿色版 dist/Kitten4播放器/
   bench.js           CPU 采样剖面 + 帧率
   probe.js           CDP 调试（执行 / 注入 / 截图 / 控制台捕获）
   patch_num.js       数值层改全原生，restore 可还原
   patch_decimal.js   decimal 分派实验（count / stat / native / hybrid / int）
+  patch_editor.js    官方编辑器副本补丁（--check / --restore / --steps=des,sel,perf,main）
   instrument.js      给 bundle 埋运行时错误点，trace / restore
 ```
 

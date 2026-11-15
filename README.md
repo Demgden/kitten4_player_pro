@@ -71,6 +71,18 @@ node tools/build_portable.js
 
 详细的中文使用说明是同目录的 `使用说明.txt`（打包时自动生成）。
 
+### 顺带：官方编辑器性能副本（可选）
+
+`dist/Kitten4编辑器/` 是从 `C:\Program Files\kitten4-desktop` 整份复制后打补丁的副本——**功能与安装版完全一致**，
+只针对「一个角色里积木特别多」的情况优化：切开积木树的 `get_descendants` 递归、序列化改单遍收集
+（5532 块 395ms → 100ms）、切角色不再和编辑抢工作区。安装版本身不动，两者共用同一份工程数据（不能同时开）。
+
+重新打补丁（幂等，自动留 `.k4p.bak`）：
+
+```bash
+node tools/patch_editor.js            # --check 只检查 / --restore 还原
+```
+
 ### 从源码直接跑
 
 ```bash
