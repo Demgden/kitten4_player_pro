@@ -14,7 +14,7 @@
  *   2. bundle：切换工作区不再「超 1000 块就等 200ms 再加载」
  *      —— 这段延迟让加载和编辑抢同一个工作区，异常还被 console.log 吞掉；
  *      改为等一帧（0ms）让加载提示画出来，失败时重试一次并把错误打到 console.error
- *   3. index.html：注入 k4p-perf.js（workspace_to_json 单遍序列化）
+ *   3. index.html：注入 k4p-perf.js（workspace_to_json 单遍序列化）与 k4p-cull.js（积木视口裁剪）
  *   4. main/index.js：禁用后台节流、开 GPU 光栅（「开始」预览同受益）
  *      注意别加 --js-flags=--max-old-space-size=4096：这个 Electron 版本加了会直接卡死页面
  */
@@ -30,7 +30,7 @@ for (const a of args) {
   else if (a.startsWith('--steps=')) opt.steps = a.slice(8).split(',');
 }
 
-const MARK = { sel: '[k4p] 工作区加载失败', html: './k4p-perf.js', main: '/* k4p-perf-bootstrap' };
+const MARK = { sel: '[k4p] 工作区加载失败', html: './k4p-perf.js', cull: './k4p-cull.js', main: '/* k4p-perf-bootstrap' };
 
 function findBundle(root) {
   const dir = path.join(root, 'resources', 'app', 'build');
@@ -105,12 +105,14 @@ function main() {
   const html = path.join(root, 'resources', 'app', 'build', 'index.html');
   const mainJs = path.join(root, 'resources', 'app', 'main', 'index.js');
   const perfDst = path.join(root, 'resources', 'app', 'build', 'k4p-perf.js');
+  const cullDst = path.join(root, 'resources', 'app', 'build', 'k4p-cull.js');
 
   if (opt.restore) {
     for (const f of [bundle, html, mainJs].filter(Boolean)) {
       if (fs.existsSync(f)) console.log('restore ' + path.basename(f) + ' → ' + restoreFile(f));
     }
     if (fs.existsSync(perfDst)) fs.unlinkSync(perfDst);
+    if (fs.existsSync(cullDst)) fs.unlinkSync(cullDst);
     return;
   }
 
@@ -137,7 +139,9 @@ function main() {
   ]);
 
   const perfSrc = path.join(__dirname, '..', 'src', 'editor', 'perf.js');
+  const cullSrc = path.join(__dirname, '..', 'src', 'editor', 'cull.js');
   if (!opt.check && want('perf')) fs.copyFileSync(perfSrc, perfDst);
+  if (!opt.check && want('cull')) fs.copyFileSync(cullSrc, cullDst);
   const h = patchFile(html, [
     {
       skip: !want('perf'),
@@ -147,6 +151,19 @@ function main() {
         const m = s.match(/<script src="\.\/kitten\.[0-9a-f]+\.js"><\/script>/);
         if (!m) return null;
         return s.replace(m[0], m[0] + '<script src="./k4p-perf.js"></script>');
+      },
+    },
+    {
+      skip: !want('cull'),
+      name: 'index.html 注入 k4p-cull.js',
+      already: (s) => s.includes(MARK.cull),
+      apply: (s) => {
+        if (s.includes('<script src="./k4p-perf.js"></script>')) {
+          return s.replace('<script src="./k4p-perf.js"></script>',
+            '<script src="./k4p-perf.js"></script><script src="./k4p-cull.js"></script>');
+        }
+        const m = s.match(/<script src="\.\/kitten\.[0-9a-f]+\.js"><\/script>/);
+        return m ? s.replace(m[0], m[0] + '<script src="./k4p-cull.js"></script>') : null;
       },
     },
   ]);
