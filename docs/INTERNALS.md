@@ -323,6 +323,66 @@ for (…) update_collapsed(), render(false);   // 全部排版
 
 > 副本与安装版**共用** `%APPDATA%\electron_for_kitten4`，所以两边不能同时开（单实例锁会切回先开的那个）。
 
+### 阶段 6c：if 加减层卡死（`generate_mutate_op` 子树 diff）
+
+症状：一条很长的 if（`如果[]那么[]` 带两层以上 else if，内部积木多）点一次 **+ / −** 就卡十几秒。
+
+根因不在渲染，而在**撤销栈的 op 生成**：`generate_mutate_op` 收到 mutate 事件后，
+把 `get_block_data_by_id()` 拿到的**整棵子树**先全删、再全插：
+
+```js
+Object.keys(a.blocks).forEach(k => { removeOp(["connections",k]); removeOp(["blocks",k]) })
+Object.keys(s.blocks).forEach(k => { insertOp(["blocks",k], s.blocks[k]) ... })
+```
+
+520 块的子树 → 1041 个 op（实测 chipmunk2d 的 `物理` 角色，`desc=520`）→ 13 秒。
+而实际变化只有：**if 块自己的 `mutation` 串、1 个新 shadow 块、1 条连接**。
+
+实测一次 `addMutation` 前后，doc 切片与新切片的逐键差异：
+
+| 差异键 | 块数 | 性质 |
+|---|---|---|
+| `shadows` | 76 | 既有表示差异（XML 属性序），不是这次改的 |
+| `is_output` | 102 | 同上 |
+| `location` | 36 | 同上 |
+| `fields.TYPE` | 74（仅新侧有） | doc 不存默认值 |
+| **`mutation`** | **1** | **真正的变化** |
+
+所以按「内容等价」判定（`canon` 归一化掉 `location` / `field_constraints` / `field_extra_attr` /
+空值 / 缺键，再做键序无关的深比较），把 1041 个 op 压到个位数。
+
+**三个必须照官方写法来的地方**（否则 op 会被静默丢掉，且不报错）：
+
+1. `TransformToIde.decompose_and_sort_op()` 把 op 拆成 pick/drop，
+   再经 `analyze_path()` 认路 —— **认不出的路径直接返回 undefined，那一条 op 就没了**。
+   所以不能自己发明路径形态（我最开始想用 `replaceOp(["blocks", id], old, new)` 整体替换，不行）。
+2. 只允许官方用过的形状：`removeOp(["connections", p, c])` → `removeOp(["connections", k])` →
+   `removeOp(["blocks", k])` → `insertOp(["blocks", k], json)` → `insertOp(["connections", k], {})` →
+   `insertOp(["connections", k, ch], v)` → 最后把父连接挂回去。
+3. **被重建的块，它到父块的那条连接必须先删再插**（父块不在重建集里时），
+   否则整批 op 全废。这是最难发现的一条：op 生成成功、`apply_op_to_doc` 不抛异常、
+   `undo_stack_` 也正常，**只有 doc 不变**。所以验证必须读 doc（见下），不能只看 UI。
+
+调试口：`window.__k4pDocOn = 1` 后，`generate_mutate_op` 会把 `r`（doc 切片）和 `s`（新切片）
+挂到 `window.__k4pDoc` / `window.__k4pNew`。读 doc 的正路是**在下一次 mutate 调用里取**
+（`get_current_ws_json()` 返回的是上一次提交后的状态）；连续两次 mutation 中间判断 doc 有没有跟上，
+是唯一能发现「op 被静默丢弃」的办法。
+
+兜底：`okOld` 为假（doc 里查不到该块）时退回官方的全删全插，绝不丢事件。
+
+实测（chipmunk2d，`desc=520`）：
+
+| | 官方 | 副本 |
+|---|---|---|
+| 加一层 | 13.4 s | **0.22 s** |
+| 删一层 | 13.0 s | **0.11 s** |
+| 连续加 4 层 | 52.3 s | **0.84 s** |
+| 连续删 4 层 | 52.1 s | **0.42 s** |
+
+正确性：加完再删，子树 521 块的 JSON **逐字节回到原样**（`diffBlocks: 0`）；
+doc 块数 5513→5514、`mutation` 里的 `elseif` 与工作区一致；
+`undo/redo` 序列 `[2,1,2,1]`；加层后 `Blockly.mainWorkspace` 引用不变（没有触发 refresh）。
+
 ---
 
 ## 性能数据

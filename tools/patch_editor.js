@@ -57,6 +57,93 @@ const SEL_NEW_ERR =
   'try{r.select_workspace(a,s)}catch(e2){console.error("[k4p] 工作区加载仍失败",e2)}}' +
   'finally{l&&(l.style.display="none")}';
 
+const MUT_HEAD = 'generate_mutate_op=function(e,t,n){';
+const MUT_TAIL = '},e.prototype.generate_edit_field_op=';
+
+/**
+ * 撤销栈的 op 生成：原来是「整棵子树全删 + 全插」。
+ * 点一次 if 的 +/- 时子树有 520 块，于是生成 1041 个 op，每个都过一遍 CRDT 文档 —— 实测 15.9 秒。
+ * 实际变化只有「if 块自己的条目 + 1 个新 shadow 块 + 1 条连接」，所以改成子树 diff：
+ * 只对消失/新增/变化的块与连接生成 op，op 数从 1041 降到个位数。
+ */
+const MUT_NEW =
+  MUT_HEAD +
+  '/*k4p-mut: 子树 diff，op 数从 O(子树) 降到 O(实际变化)*/' +
+  'var r=n||this.get_current_ws_json(),' +
+  'a=this.Blink.json.get_block_data_by_id(r,e),' +
+  's=t,c=[];' +
+  'try{if(window.__k4pDocOn){window.__k4pDoc=r;window.__k4pNew=s}}catch(_){}' +
+  'var okOld=!!(a&&a.blocks&&a.blocks[e]&&s&&s.blocks);' +
+  'var eq=function(a,b){' +
+  'if(a===b)return!0;' +
+  'if(a===null||b===null||typeof a!=="object"||typeof b!=="object")return!1;' +
+  'if(Array.isArray(a)!==Array.isArray(b))return!1;' +
+  'if(Array.isArray(a)){if(a.length!==b.length)return!1;' +
+  'for(var i=0;i<a.length;i++)if(!eq(a[i],b[i]))return!1;return!0}' +
+  'var ka=Object.keys(a);' +
+  'for(var i=0;i<ka.length;i++){var kk=ka[i];if(!(kk in b)||!eq(a[kk],b[kk]))return!1}return!0};' +
+  'var canon=function(v){' +
+  'if(v===null||v===void 0)return "";' +
+  'if(typeof v!=="object")return v;' +
+  'if(Array.isArray(v)){var ar=[];for(var i=0;i<v.length;i++){var x=canon(v[i]);if(x!=="")ar.push(x)}return ar.length?ar:""}' +
+  'var o={},ks=Object.keys(v);' +
+  'for(var i=0;i<ks.length;i++){var kk=ks[i];' +
+  'if(kk==="location"||kk==="field_constraints"||kk==="field_extra_attr")continue;' +
+  'var y=canon(v[kk]);if(y!=="")o[kk]=y}' +
+  'return Object.keys(o).length?o:""};' +
+  'var same=function(a,b){return eq(canon(a),canon(b))};' +
+  // 兜底：doc 里查不到这个块（极罕见），按官方做法整棵子树全删全插，绝不丢事件
+  'if(!okOld){' +
+  'if(a&&a.blocks){' +
+  'var pl=a.blocks[e]&&a.blocks[e].parent_id;' +
+  'if(pl&&r.connections&&r.connections[pl]&&r.connections[pl][e]){' +
+  'c.push((0,i.removeOp)(["connections",pl,e]));' +
+  '(pend[pl]=pend[pl]||{})[e]=r.connections[pl][e]}' +
+  'for(k in a.blocks)if(a.blocks.hasOwnProperty(k)){' +
+  'c.push((0,i.removeOp)(["connections",k]));c.push((0,i.removeOp)(["blocks",k]))}' +
+  'var ac=a.comments||{};for(k in ac)if(ac.hasOwnProperty(k))c.push((0,i.removeOp)(["comments",k]))}' +
+  'if(s&&s.blocks){' +
+  'for(k in s.blocks)if(s.blocks.hasOwnProperty(k))c.push((0,i.insertOp)(["blocks",k],s.blocks[k]));' +
+  'var sc=s.connections||{};' +
+  'for(k in sc)if(sc.hasOwnProperty(k)){c.push((0,i.insertOp)(["connections",k],{}));' +
+  'for(ch in sc[k])if(sc[k].hasOwnProperty(ch))c.push((0,i.insertOp)(["connections",k,ch],sc[k][ch]))}' +
+  'var sk=s.comments||{};for(k in sk)if(sk.hasOwnProperty(k))c.push((0,i.insertOp)(["comments",k],sk[k]))}' +
+  'for(p in pend)if(pend.hasOwnProperty(p))for(ch in pend[p])if(pend[p].hasOwnProperty(ch))' +
+  'c.push((0,i.insertOp)(["connections",p,ch],pend[p][ch]));' +
+  'return c.length?c.reduce(o.type.compose,null):null}' +
+  'var ob=a.blocks,nb=s.blocks,oc=a.connections||{},nc=s.connections||{},' +
+  'ocm=a.comments||{},ncm=s.comments||{},rmo=[],rset={},pend={},k,p,ch,ov,nv,id,pid,isNew,tt;' +
+  'for(k in ob)if(ob.hasOwnProperty(k)&&(!nb[k]||!same(ob[k],nb[k])))rmo.push(k);' +
+  'for(k=0;k<rmo.length;k++)rset[rmo[k]]=1;' +
+  'for(k=0;k<rmo.length;k++){' +
+  'id=rmo[k],pid=ob[id].parent_id;' +
+  'if(pid&&!rset[pid]&&oc[pid]&&oc[pid][id]){' +
+  'c.push((0,i.removeOp)(["connections",pid,id]));' +
+  '(pend[pid]=pend[pid]||{})[id]=oc[pid][id]}}' +
+  'for(k=0;k<rmo.length;k++){' +
+  'c.push((0,i.removeOp)(["connections",rmo[k]]));' +
+  'c.push((0,i.removeOp)(["blocks",rmo[k]]))}' +
+  'for(k in ocm)if(ocm.hasOwnProperty(k)&&(!ncm[k]||rset[k]))c.push((0,i.removeOp)(["comments",k]));' +
+  'for(k in nb)if(nb.hasOwnProperty(k)&&(!ob[k]||rset[k]))c.push((0,i.insertOp)(["blocks",k],nb[k]));' +
+  'for(k in nb)if(nb.hasOwnProperty(k)){' +
+  'isNew=!ob[k]||rset[k],tt=nc[k];' +
+  'if(isNew){' +
+  'c.push((0,i.insertOp)(["connections",k],{}));' +
+  'if(tt)for(ch in tt)if(tt.hasOwnProperty(ch))c.push((0,i.insertOp)(["connections",k,ch],tt[ch]));' +
+  'continue}' +
+  'if(tt)for(ch in tt)if(tt.hasOwnProperty(ch)){' +
+  'ov=oc[k]?oc[k][ch]:void 0,nv=tt[ch];' +
+  'if(!ov)c.push((0,i.insertOp)(["connections",k,ch],nv));' +
+  'else if(!same(ov,nv))c.push((0,i.removeOp)(["connections",k,ch])),c.push((0,i.insertOp)(["connections",k,ch],nv))}}' +
+  'for(p in oc)if(oc.hasOwnProperty(p)&&!rset[p])' +
+  'for(ch in oc[p])if(oc[p].hasOwnProperty(ch)&&(!nc[p]||!nc[p][ch]))c.push((0,i.removeOp)(["connections",p,ch]));' +
+  'for(k in ncm)if(ncm.hasOwnProperty(k)&&(!ocm[k]||rset[k]))c.push((0,i.insertOp)(["comments",k],ncm[k]));' +
+  'for(p in pend)if(pend.hasOwnProperty(p))' +
+  'for(ch in pend[p])if(pend[p].hasOwnProperty(ch))c.push((0,i.insertOp)(["connections",p,ch],pend[p][ch]));' +
+  'try{window.__k4pMut&&(window.__k4pMut.n++,window.__k4pMut.ops+=c.length)}catch(_){}' +
+  'return c.length?c.reduce(o.type.compose,null):null' +
+  '}';
+
 const MAIN_BOOT =
   '/* k4p-perf-bootstrap：渲染/编辑共用，等价于播放器里的同款开关 */\n' +
   '(function(){try{var e=require("electron"),a=e&&e.app;if(!a||!a.commandLine)return;' +
@@ -135,6 +222,19 @@ function main() {
       name: '加载失败不再静默',
       already: (s) => s.includes(MARK.sel),
       apply: (s) => (s.includes(SEL_OLD_ERR) ? s.replace(SEL_OLD_ERR, SEL_NEW_ERR) : null),
+    },
+    {
+      skip: !want('mut'),
+      name: '撤销栈子树 diff（if 加减层 15.9s → 亚秒）',
+      already: (s) => s.includes('/*k4p-mut:'),
+      apply: (s) => {
+        const i0 = s.indexOf(MUT_HEAD);
+        if (i0 < 0) return null;
+        const i1 = s.indexOf(MUT_TAIL, i0);
+        if (i1 < 0) return null;
+        // MUT_TAIL 开头的 } 是原函数体的收尾，MUT_NEW 自带，跳过它
+        return s.slice(0, i0) + MUT_NEW + s.slice(i1 + 1);
+      },
     },
   ]);
 
