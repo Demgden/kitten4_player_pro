@@ -14,9 +14,12 @@
  *   2. bundle：切换工作区不再「超 1000 块就等 200ms 再加载」
  *      —— 这段延迟让加载和编辑抢同一个工作区，异常还被 console.log 吞掉；
  *      改为等一帧（0ms）让加载提示画出来，失败时重试一次并把错误打到 console.error
- *   3. index.html：注入 k4p-perf.js（workspace_to_json 单遍序列化）与 k4p-cull.js（积木视口裁剪）
+ *   3. index.html：注入 k4p-perf.js（workspace_to_json 单遍序列化）、k4p-cull.js（积木视口裁剪）、
+ *      k4p-quiet.js（隐藏控件不渲染 —— 隐藏的页面按钮里有 45 个 <g> 每帧写 matrix）
  *   4. main/index.js：禁用后台节流、开 GPU 光栅（「开始」预览同受益）
  *      注意别加 --js-flags=--max-old-space-size=4096：这个 Electron 版本加了会直接卡死页面
+ *   5. bundle：平移从 SVG transform 属性挪到 CSS transform（attribute 只留 scale）
+ *      —— 属性一变整个 SVG 子树 layout 脏，cull 每帧读 CTM 就把它 flush 出来，拖视角 240ms/帧
  */
 const fs = require('fs');
 const path = require('path');
@@ -30,7 +33,7 @@ for (const a of args) {
   else if (a.startsWith('--steps=')) opt.steps = a.slice(8).split(',');
 }
 
-const MARK = { sel: '[k4p] 工作区加载失败', html: './k4p-perf.js', cull: './k4p-cull.js', main: '/* k4p-perf-bootstrap' };
+const MARK = { sel: '[k4p] 工作区加载失败', html: './k4p-perf.js', cull: './k4p-cull.js', quiet: './k4p-quiet.js', main: '/* k4p-perf-bootstrap' };
 
 function findBundle(root) {
   const dir = path.join(root, 'resources', 'app', 'build');
@@ -59,6 +62,55 @@ const SEL_NEW_ERR =
 
 const MUT_HEAD = 'generate_mutate_op=function(e,t,n){';
 const MUT_TAIL = '},e.prototype.generate_edit_field_op=';
+
+/**
+ * 平移从 SVG transform 属性挪到 CSS transform。
+ *
+ * 官方 translate() 给画布 <g> 写 transform="translate(x, y) scale(s)"。
+ * 属性一变，整个 SVG 子树（37000+ 节点）就 layout 脏；cull 每帧读 getScreenCTM()
+ * 会把它 flush 出来，拖视角一帧 240ms。改成：
+ *   attribute = "translate(0, 0) scale(s)"   // 只留 scale，get_scale() 还要读
+ *   style.transform = "translate(xpx,ypx) scale(s)"  // 真正的平移，不触 layout
+ * CSS transform 覆盖 attribute，所以视觉等价；get_relative_xy() 本来就会读 style 里的
+ * translate，实测 CTM/rect/get_svg_xy 与官方逐项相同。
+ * 注意别加 will-change：整块画布 raster 成大纹理会更慢（实测 220ms）。
+ */
+const PAN_OLD =
+  'e.prototype.translate=function(e,t){if(this.use_workspace_drag_surface_&&this.is_drag_surface_active_&&this.workspace_drag_surface_)' +
+  'this.workspace_drag_surface_.translate_surface(e+this.offset[0],t+this.offset[1]);else{' +
+  'var n="translate("+e+", "+t+") scale("+this.scale+")";' +
+  'null!=this.svg_block_canvas_&&this.svg_block_canvas_.setAttribute("transform",n),' +
+  'null!=this.svg_bubble_canvas_&&this.svg_bubble_canvas_.setAttribute("transform",n)}' +
+  'this.block_drag_surface_&&this.block_drag_surface_.translate_and_scale_group(e+this.offset[0],t+this.offset[1],this.scale)}';
+
+const PAN_NEW =
+  'e.prototype.translate=function(e,t){/*k4p-pan*/' +
+  'if(this.use_workspace_drag_surface_&&this.is_drag_surface_active_&&this.workspace_drag_surface_)' +
+  'this.workspace_drag_surface_.translate_surface(e+this.offset[0],t+this.offset[1]);else{' +
+  'var a="translate(0, 0) scale("+this.scale+")",n="translate("+e+"px,"+t+"px) scale("+this.scale+")",' +
+  'c=this.svg_block_canvas_,b=this.svg_bubble_canvas_;' +
+  'null!=c&&(c.getAttribute("transform")!==a&&c.setAttribute("transform",a),c.style.transform=n),' +
+  'null!=b&&(b.getAttribute("transform")!==a&&b.setAttribute("transform",a),b.style.transform=n)}' +
+  'this.block_drag_surface_&&this.block_drag_surface_.translate_and_scale_group(e+this.offset[0],t+this.offset[1],this.scale)}';
+
+const PAND_OLD =
+  'var t="translate("+(e[0]-this.offset[0])+", "+(e[1]-this.offset[1])+") scale("+this.scale+")";' +
+  'null!=this.svg_block_canvas_&&this.svg_block_canvas_.setAttribute("transform",t),' +
+  'null!=this.svg_bubble_canvas_&&this.svg_bubble_canvas_.setAttribute("transform",t)';
+
+const PAND_NEW =
+  'var t="translate(0, 0) scale("+this.scale+")",u="translate("+(e[0]-this.offset[0])+"px,"+(e[1]-this.offset[1])+"px) scale("+this.scale+")";' +
+  '/*k4p-pan*/null!=this.svg_block_canvas_&&(this.svg_block_canvas_.setAttribute("transform",t),this.svg_block_canvas_.style.transform=u),' +
+  'null!=this.svg_bubble_canvas_&&(this.svg_bubble_canvas_.setAttribute("transform",t),this.svg_bubble_canvas_.style.transform=u)';
+
+const PANS_OLD =
+  'var r=function(t){var n=t.getAttribute("transform"),r="scale("+e+")";t.setAttribute("transform",n?n.replace(/scale\\([0-9\\.]+\\)/,r):r)};';
+
+const PANS_NEW =
+  'var r=function(t){/*k4p-pan*/var n=t.getAttribute("transform"),r="scale("+e+")";' +
+  't.setAttribute("transform",n?n.replace(/scale\\([0-9\\.]+\\)/,r):r);' +
+  'var q=t.style.transform;q&&(t.style.transform=q.replace(/scale\\([0-9\\.]+\\)/,r))};';
+
 
 /**
  * 撤销栈的 op 生成：原来是「整棵子树全删 + 全插」。
@@ -193,6 +245,7 @@ function main() {
   const mainJs = path.join(root, 'resources', 'app', 'main', 'index.js');
   const perfDst = path.join(root, 'resources', 'app', 'build', 'k4p-perf.js');
   const cullDst = path.join(root, 'resources', 'app', 'build', 'k4p-cull.js');
+  const quietDst = path.join(root, 'resources', 'app', 'build', 'k4p-quiet.js');
 
   if (opt.restore) {
     for (const f of [bundle, html, mainJs].filter(Boolean)) {
@@ -200,6 +253,7 @@ function main() {
     }
     if (fs.existsSync(perfDst)) fs.unlinkSync(perfDst);
     if (fs.existsSync(cullDst)) fs.unlinkSync(cullDst);
+    if (fs.existsSync(quietDst)) fs.unlinkSync(quietDst);
     return;
   }
 
@@ -236,12 +290,27 @@ function main() {
         return s.slice(0, i0) + MUT_NEW + s.slice(i1 + 1);
       },
     },
+    {
+      skip: !want('pan'),
+      name: '平移改走 CSS transform（拖视角不触发 SVG layout）',
+      already: (s) => s.includes('/*k4p-pan*/'),
+      apply: (s) => {
+        let t = s;
+        if (!t.includes(PAN_OLD)) return null;
+        t = t.replace(PAN_OLD, PAN_NEW);
+        if (t.includes(PAND_OLD)) t = t.replace(PAND_OLD, PAND_NEW);
+        if (t.includes(PANS_OLD)) t = t.replace(PANS_OLD, PANS_NEW);
+        return t;
+      },
+    },
   ]);
 
   const perfSrc = path.join(__dirname, '..', 'src', 'editor', 'perf.js');
   const cullSrc = path.join(__dirname, '..', 'src', 'editor', 'cull.js');
+  const quietSrc = path.join(__dirname, '..', 'src', 'editor', 'quiet.js');
   if (!opt.check && want('perf')) fs.copyFileSync(perfSrc, perfDst);
   if (!opt.check && want('cull')) fs.copyFileSync(cullSrc, cullDst);
+  if (!opt.check && want('quiet')) fs.copyFileSync(quietSrc, quietDst);
   const h = patchFile(html, [
     {
       skip: !want('perf'),
@@ -266,6 +335,18 @@ function main() {
         return m ? s.replace(m[0], m[0] + '<script src="./k4p-cull.js"></script>') : null;
       },
     },
+    {
+      skip: !want('quiet'),
+      name: 'index.html 注入 k4p-quiet.js',
+      already: (s) => s.includes(MARK.quiet),
+      apply: (s) => {
+        for (const prev of ['<script src="./k4p-cull.js"></script>', '<script src="./k4p-perf.js"></script>']) {
+          if (s.includes(prev)) return s.replace(prev, prev + '<script src="./k4p-quiet.js"></script>');
+        }
+        const m = s.match(/<script src="\.\/kitten\.[0-9a-f]+\.js"><\/script>/);
+        return m ? s.replace(m[0], m[0] + '<script src="./k4p-quiet.js"></script>') : null;
+      },
+    },
   ]);
 
   const mainSrc = fs.readFileSync(mainJs, 'utf8');
@@ -282,4 +363,6 @@ function main() {
   console.log(opt.check ? '(只检查，未写入)' : '完成');
 }
 
-main();
+module.exports = { PAN_OLD, PAN_NEW, PAND_OLD, PAND_NEW, PANS_OLD, PANS_NEW };
+
+if (require.main === module) main();

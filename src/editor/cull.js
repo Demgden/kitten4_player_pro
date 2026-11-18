@@ -17,6 +17,7 @@
     on: true,
     margin: 0.5,
     minBlocks: 300,
+    every: 6,
     passes: 0,
     hidden: 0,
     shown: 0,
@@ -28,7 +29,7 @@
   R.snapshot = function () {
     return {
       on: R.on, applied: R.applied, blocks: R.blocks, hidden: R.hidden, shown: R.shown,
-      passes: R.passes, lastMs: R.lastMs, buildMs: R.buildMs, err: R.err,
+      passes: R.passes, lastMs: R.lastMs, buildMs: R.buildMs, every: R.every, err: R.err,
     };
   };
   R.off = function () { R.on = false; showAll(); };
@@ -204,9 +205,13 @@
       return;
     }
 
-    var t = canvas.getAttribute('transform') || '';
+    // 平移可能落在 CSS transform 上（k4p 平移补丁），attribute 不再变化 → 两者都取
+    var t = (canvas.style.transform || '') + '/' + (canvas.getAttribute('transform') || '');
     var s = t + '|' + (ws.scrollX | 0) + ',' + (ws.scrollY | 0) + '|' + count + '|' + (ws.scale || 1) + '|' + R.margin;
     if (s === sig && R.passes % 20 !== 0) return;
+    // 平移节流：每次 toggle display 都会让 SVG 子树重新 layout，
+    // 逐帧跟着平移反而拖慢（实测每帧更新 64ms/帧，每 6 帧 44ms）。留 0.5 屏余量，够缓冲。
+    if (s !== sig && R.every > 1 && tick % R.every !== 0) return;
     sig = s;
 
     var t0 = performance.now();

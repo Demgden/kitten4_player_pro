@@ -385,6 +385,100 @@ doc 块数 5513→5514、`mutation` 里的 `elseif` 与工作区一致；
 
 ---
 
+### 阶段 6d：拖视角（平移）与不可见控件
+
+阶段 6b 之后静止帧率好看了，**但拖视角还是每帧 100ms 上下**。用户原话是「把平移从 SVG `<g>` 的
+transform 挪到合成层」，实测下来这条路走不通，真正的收益在另外两处。
+
+#### 合成层是死路（别重复试）
+
+| 平移方式 | 每帧（5513 块，同位置同轨迹） |
+|---|---|
+| `transform` 属性（官方） | 96 ms |
+| `style.transform`（CSS，无提升） | 94 ms |
+| `style.transform` + `will-change:transform` | **217 ms** |
+| `translate3d(...)` + `will-change:transform` | **210 ms** |
+
+`will-change` 会让 Chrome 把整个 block canvas（逻辑尺寸 4766×20487）raster 成一张层纹理，
+远超 GPU 单边限制，每帧都在丢弃/重建 tile，比直接重绘还慢一倍。
+
+**但属性 → CSS 本身仍有价值**：改 `transform` 属性会让整棵 SVG（37814 节点）layout 脏，
+`cull` 每帧读 `getScreenCTM()` 会把它 flush 出来；CSS transform 不触发 layout。
+
+#### 落地写法（`patch_editor.js` 的 `pan` 步骤，3 处）
+
+```js
+// attribute 只留 scale（get_scale() 还要读它），平移写进 style
+a = "translate(0, 0) scale(" + this.scale + ")"
+n = "translate(" + e + "px," + t + "px) scale(" + this.scale + ")"
+c.getAttribute("transform") !== a && c.setAttribute("transform", a);
+c.style.transform = n;
+```
+
+要点：
+
+1. **CSS transform 覆盖 attribute**（不是叠加），所以 style 里必须写完整的 translate + scale。
+2. attribute 的 translate **必须归零**。`utils.get_relative_xy()` 会把 attribute 的 translate
+   和 style 里的 translate **都加上**，留着旧值就是双倍偏移。
+3. 另外两处同源代码要一起改：`reset_drag_surface()`（拖积木结束写回画布）、
+   `set_scale()` 里那个 `replace(/scale\([0-9\.]+\)/)` 的正则（style 也要跟着改）。
+4. 不要给画布加 `will-change`。
+
+正确性（chipmunk2d，与官方逐项比对）：`getScreenCTM` / `getBoundingClientRect` /
+`utils.get_relative_xy` / 每个积木的 rect / `get_svg_xy` **差异全为 0**；
+平移 400px 后 CTM 与积木 rect 同步 +400；`set_scale(1.15)` 后 attribute 与 style 的 scale
+一致、`get_scale()` 读到 1.15；截图与官方逐像素一致。
+
+#### 真正的两个瓶颈
+
+**一、隐藏控件还在跑动画**（`src/editor/quiet.js` → `build/k4p-quiet.js`）
+
+左侧「页面/图层」按钮切走后是 `opacity:0 + translateY(-20px)`，但仍在渲染树里。
+每个按钮里有一个 44×44 的 `<svg>`，里面 12~45 个 `<g>` **每秒写 8500 次 `transform`**
+（MutationObserver 实测 1.2s 内 10274 次）。这些写入让整页每帧重绘。
+
+| 处理方式 | 静止每帧 |
+|---|---|
+| 原样 | 30 ms |
+| `visibility:hidden`（本来就 hidden） | 38 ms |
+| 按钮 `will-change` | 32 ms |
+| `contain:paint` | 37 ms |
+| **`content-visibility:hidden`** | **16.7 ms** |
+
+`content-visibility:hidden` 跳过子树的 style/layout/paint，**元素框和 CSS 过渡都保留**，
+所以切页面时的淡入淡出不受影响。规则：
+
+```css
+[class*="page_btn_item"][class*="hidden"]{content-visibility:hidden}
+```
+
+**二、裁剪自己把拖视角拖慢了**
+
+cull 每帧重算并 toggle `display`，每次 toggle 都让 SVG 子树重新 layout：
+
+| cull 更新频率 | 拖视角每帧 |
+|---|---|
+| 每帧 | 64~98 ms |
+| 每 3 帧 | 47~52 ms |
+| **每 6 帧** | **44 ms** |
+| 冻结（不更新） | 44 ms |
+
+所以 `cull.js` 加了 `R.every = 6` 的节流：`sig` 变了也要等到 `tick % every === 0` 才跑
+（`sig` 不提前更新，否则下一帧就 `s === sig` 直接 return，永远等不到）。
+留 0.5 屏余量，100ms 内的拖动距离远小于缓冲，看不出差别。
+
+顺带否掉一个方向：**把 margin 调小反而更慢**（0.5 → 33ms，0.1 → 42ms，0.02 → 46ms）——
+余量越小，边缘积木进出视口越频繁，`display` 切换次数反而变多。
+
+#### 合计（chipmunk2d 5513 块，同一初始位置、同一段拖动）
+
+| | 官方 | 副本 |
+|---|---|---|
+| 静止 | 30~38 ms（26~33 fps） | **16.7 ms（60 fps）** |
+| 拖视角 | 96 ms（10 fps） | **51 ms（20 fps）** |
+
+---
+
 ## 性能数据
 
 florr（335327306，7.6 MB，15 个实体），12 秒采样：
@@ -481,6 +575,10 @@ tools/
 | `?k4p_debug=3` | 打印所有 XHR 目标地址 |
 | `?k4p_debug=4` | 记录每次 `Error` 构造，定位被吞的异常 |
 | `?k4p_cg=0` / `localStorage.k4p_cg='0'` | 关掉代码生成器补丁，用于 A/B 对比 |
+| `?k4p_cull=0` / `localStorage.k4p_cull='0'` | 编辑器：关掉积木视口裁剪 |
+| `?k4p_quiet=0` / `localStorage.k4p_quiet='0'` | 编辑器：关掉「隐藏控件不渲染」 |
+| `window.__k4pCull.every` | 编辑器：裁剪跟随平移的帧间隔（默认 6） |
+| `window.__k4pCull.margin` / `.kick()` | 编辑器：裁剪屏余量（默认 0.5）/ 强制重建 |
 | `window.__k4pNative(0)` | 数值层回退到 decimal 原实现（`1` 切回全原生） |
 | `F9` / 标题栏「运行信息」 | 开关右侧运行信息面板（`window.__k4pProf`） |
 
