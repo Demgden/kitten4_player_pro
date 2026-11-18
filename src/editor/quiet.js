@@ -32,9 +32,10 @@
   R.enable = function () { on = true; R.on = true; mount(); };
   window.__k4pQuiet = R;
 
+  var SEL = '[class*="page_btn_item"][class*="hidden"]';
   var CSS =
     '/* k4p-quiet：隐藏的页面按钮子树不渲染，避免不可见动画拖垮整页重绘 */\n' +
-    '[class*="page_btn_item"][class*="hidden"]{content-visibility:hidden}\n';
+    SEL + '{content-visibility:hidden}\n';
 
   function mount() {
     if (!on || R.el) return;
@@ -45,10 +46,10 @@
     el.textContent = CSS;
     d.appendChild(el);
     R.el = el;
-    // 命中统计（只用于确认规则真的套上了）
-    try {
-      R.fired = document.querySelectorAll('[class*="page_btn_item"][class*="hidden"]').length;
-    } catch (e) {}
+    // 命中统计（只用于确认规则真的套上了；界面渲染出来才有，所以延迟数）
+    setTimeout(function () {
+      try { R.fired = document.querySelectorAll(SEL).length; } catch (e) {}
+    }, 3000);
   }
 
   mount();
