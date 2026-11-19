@@ -1,16 +1,24 @@
-# Kitten4 播放器
+# Kitten4 播放器 & 编辑器副本
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-Windows%20x64-lightgrey.svg)](#已知限制)
 [![Download:Release](https://img.shields.io/badge/Download-kitten4播放器-freen.svg)](https://github.com/Demgden/kitten4_player_pro/releases/latest)
 
-把 Kitten4（编程猫）作品当普通游戏玩：**本地 `.bcm4` 双击就开，作品号粘进输入框就能玩**，不用开编辑器，也不用先绕进社区网站。
+两个并列项目，互不依赖：
 
-额外附有函数调用及性能消耗监测
+1. **播放器**——把 Kitten4（编程猫）作品当普通游戏玩：**本地 `.bcm4` 双击就开，作品号粘进输入框就能玩**，不用开编辑器，也不用先绕进社区网站。额外附有函数调用及性能消耗监测。
+2. **编辑器性能副本**——官方桌面编辑器整份复制后打补丁，功能不变，只修积木多时的卡顿，并支持整页缩放。
+
+| 项目 | 产物 | 文档 |
+|---|---|---|
+| Kitten4 播放器 | `dist/Kitten4播放器/` | [docs/PLAYER.md](docs/PLAYER.md) |
+| Kitten4 编辑器（性能副本） | `dist/Kitten4编辑器/` | [docs/EDITOR.md](docs/EDITOR.md) |
+
+完整文档索引见 [docs/README.md](docs/README.md)。
 
 ---
 
-## 这是什么
+## 一、播放器
 
 官方播放器本身是好的，问题在于它总被包在别的东西里：想玩线上的作品得先打开社区站（导航、推荐流、评论、金币一个不少），想玩自己存在电脑里的 `.bcm4` 则必须打开整个编辑器。
 
@@ -27,7 +35,7 @@
 
 ---
 
-## 功能
+### 功能
 
 **播本地作品**
 - 拖进窗口、点「选择文件」、或把文件拖到 exe 图标上
@@ -56,9 +64,9 @@
 
 ---
 
-## 快速开始
+### 快速开始
 
-### 用现成的绿色版
+#### 用现成的绿色版
 
 ```bash
 npm install
@@ -71,19 +79,7 @@ node tools/build_portable.js
 
 详细的中文使用说明是同目录的 `使用说明.txt`（打包时自动生成）。
 
-### 顺带：官方编辑器性能副本（可选）
-
-`dist/Kitten4编辑器/` 是从 `C:\Program Files\kitten4-desktop` 整份复制后打补丁的副本——**功能与安装版完全一致**，
-只针对「一个角色里积木特别多」的情况优化：切开积木树的 `get_descendants` 递归、序列化改单遍收集
-（5532 块 395ms → 100ms）、切角色不再和编辑抢工作区。安装版本身不动，两者共用同一份工程数据（不能同时开）。
-
-重新打补丁（幂等，自动留 `.k4p.bak`）：
-
-```bash
-node tools/patch_editor.js            # --check 只检查 / --restore 还原
-```
-
-### 从源码直接跑
+#### 从源码直接跑
 
 ```bash
 npm install
@@ -92,13 +88,13 @@ npm start          # 或 npm run dev，带开发者工具
 
 需要 Node 18+ 和 Windows。首次运行会下载 Electron（约 100 MB）。
 
-> 在 Windows Git Bash 里手动启动 Electron 时，前缀加上 `env -u ELECTRON_RUN_AS_NODE -u NODE_OPTIONS`，否则可能以 Node 模式启动、或打包脚本删除文件时报 `EBUSY`。原因写在 [docs/INTERNALS.md](docs/INTERNALS.md)。
+> 在 Windows Git Bash 里手动启动 Electron 时，前缀加上 `env -u ELECTRON_RUN_AS_NODE -u NODE_OPTIONS`，否则可能以 Node 模式启动、或打包脚本删除文件时报 `EBUSY`。原因写在 [docs/PLAYER.md](docs/PLAYER.md)。
 
 ---
 
-## 用法
+### 用法
 
-### 打开本地作品
+#### 打开本地作品
 
 三种方式，随便挑：
 
@@ -108,7 +104,7 @@ npm start          # 或 npm run dev，带开发者工具
 
 想双击就播，先运行一次 `安装文件关联.bat`（只写当前用户注册表）；不想用了运行 `卸载文件关联.bat`。
 
-### 播线上作品
+#### 播线上作品
 
 在首页输入框里填作品号，回车或点「在线播放」：
 
@@ -121,7 +117,7 @@ npm start          # 或 npm run dev，带开发者工具
 
 第一次打开要下载作品数据（通常几 MB 到几十 MB），首页会显示解析、下载、启动的进度。下载完存到本地，下次打开只比对版本，1 秒级进画面。
 
-### 登录（可选）
+#### 登录（可选）
 
 首页账号条点「登录」，填手机号或邮箱 + 密码。登录后：
 
@@ -132,7 +128,7 @@ npm start          # 或 npm run dev，带开发者工具
 
 ---
 
-## 它为什么比官方页面快
+### 它为什么比官方页面快
 
 不是因为播放器换了实现——用的就是官方 `player_v2`。快在两层：
 
@@ -148,7 +144,7 @@ npm start          # 或 npm run dev，带开发者工具
 | 生成代码骨架（死 pc 写入、帧字段提局部） | 真实脚本遍历 16.6 µs → 9.7 µs（+71%） |
 | 作品数据本地托管 + 缓存 | 第二次打开 1 秒级，断网可玩 |
 
-florr（335327306）实测「每帧用时」从 0.16 降到 0~0.09，画面里那个 `fps 51` 就是它跑出来的。更完整的逆向过程、接口细节在 [docs/INTERNALS.md](docs/INTERNALS.md)。
+florr（335327306）实测「每帧用时」从 0.16 降到 0~0.09，画面里那个 `fps 51` 就是它跑出来的。更完整的逆向过程、接口细节在 [docs/PLAYER.md](docs/PLAYER.md)。
 
 ---
 
@@ -166,6 +162,37 @@ florr（335327306）实测「每帧用时」从 0.16 降到 0~0.09，画面里�
 **有 mac / Linux / 手机版吗**
 
 没有。目前只打包了 Windows x64，代码本身是 Electron，理论上换平台重新打包即可，但没测过。
+
+---
+
+## 二、编辑器（性能副本，可选）
+
+`dist/Kitten4编辑器/` 是从 `C:\Program Files\kitten4-desktop` **整份复制后打补丁**的副本，
+**功能与安装版完全一致**，安装版本身一行不动。它不是本仓库构建出来的，而是官方产物 + 补丁脚本。
+
+双击 `源码编辑器4.0.exe` 直接用。它与安装版共用同一份工程数据（`%APPDATA%\electron_for_kitten4`），
+所以**两者不能同时开**。
+
+### 修了什么
+
+| 问题 | 官方 | 副本 |
+|---|---|---|
+| 一个角色 5513 块时改一次值 | 395 ms | **100 ms** |
+| 静止帧率（就是不动也卡） | 22 fps | **60 fps** |
+| 拖动画布 | 96 ms/帧（10 fps） | **51 ms/帧（20 fps）** |
+| if 块点一次 `+` 加层 | 13.4 s | **0.22 s** |
+| 界面在大屏上占比过大 | 只能缩放积木区 | 整页 `Ctrl+= / Ctrl+- / Ctrl+0` |
+
+细节、测量数据、踩过的坑都在 [docs/EDITOR.md](docs/EDITOR.md)；
+面向使用者的 9 条说明（含怎么关掉每一项）是 `dist/Kitten4编辑器/【优化说明】.txt`。
+
+### 重新打补丁
+
+```bash
+node tools/patch_editor.js --check     # 先检查能不能对上
+node tools/patch_editor.js             # 打上（幂等，自动留 .k4p.bak）
+node tools/patch_editor.js --restore    # 还原成官方原版
+```
 
 ---
 
