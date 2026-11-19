@@ -111,6 +111,24 @@ const PANS_NEW =
   't.setAttribute("transform",n?n.replace(/scale\\([0-9\\.]+\\)/,r):r);' +
   'var q=t.style.transform;q&&(t.style.transform=q.replace(/scale\\([0-9\\.]+\\)/,r))};';
 
+/**
+ * 画布内容搬进 / 搬出拖拽层（workspace drag surface）时，原来的做法是把
+ * canvas 的 transform **attribute** 重置成 translate(0,0)。
+ * 平移改到 CSS 之后 attribute 本来就是 0，可 style 里还留着上一帧的 translate，
+ * 而 CSS 覆盖 attribute —— 内容一进 surface 就多偏一个旧 scroll，
+ * 视觉上就是「按下鼠标视角猛跳一下、松开又跳回来」。
+ * 所以搬家时把 style 也一起清零（scale 保留给 surface 的缩放）。
+ */
+const PANSURF_OLD =
+  'i.firstElementChild&&i.firstElementChild.setAttribute("transform","translate(0, 0) scale("+r+")"),' +
+  'i.lastElementChild&&i.lastElementChild.setAttribute("transform","translate(0, 0) scale("+r+")")';
+
+const PANSURF_NEW =
+  'i.firstElementChild&&(i.firstElementChild.setAttribute("transform","translate(0, 0) scale("+r+")"),' +
+  '/*k4p-pan*/i.firstElementChild.style.transform="translate(0px, 0px) scale("+r+")"),' +
+  'i.lastElementChild&&(i.lastElementChild.setAttribute("transform","translate(0, 0) scale("+r+")"),' +
+  'i.lastElementChild.style.transform="translate(0px, 0px) scale("+r+")")';
+
 
 /**
  * 撤销栈的 op 生成：原来是「整棵子树全删 + 全插」。
@@ -293,14 +311,14 @@ function main() {
     {
       skip: !want('pan'),
       name: '平移改走 CSS transform（拖视角不触发 SVG layout）',
-      already: (s) => s.includes('/*k4p-pan*/'),
+      already: (s) => s.includes(PANSURF_NEW),
       apply: (s) => {
-        let t = s;
-        if (!t.includes(PAN_OLD)) return null;
-        t = t.replace(PAN_OLD, PAN_NEW);
-        if (t.includes(PAND_OLD)) t = t.replace(PAND_OLD, PAND_NEW);
-        if (t.includes(PANS_OLD)) t = t.replace(PANS_OLD, PANS_NEW);
-        return t;
+        let t = s, n = 0;
+        if (t.includes(PAN_OLD)) { t = t.replace(PAN_OLD, PAN_NEW); n++; }
+        if (t.includes(PAND_OLD)) { t = t.replace(PAND_OLD, PAND_NEW); n++; }
+        if (t.includes(PANS_OLD)) { t = t.replace(PANS_OLD, PANS_NEW); n++; }
+        if (t.includes(PANSURF_OLD)) { t = t.replace(PANSURF_OLD, PANSURF_NEW); n++; }
+        return n ? t : null;
       },
     },
   ]);

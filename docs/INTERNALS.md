@@ -470,6 +470,36 @@ cull 每帧重算并 toggle `display`，每次 toggle 都让 SVG 子树重新 la
 顺带否掉一个方向：**把 margin 调小反而更慢**（0.5 → 33ms，0.1 → 42ms，0.02 → 46ms）——
 余量越小，边缘积木进出视口越频繁，`display` 切换次数反而变多。
 
+#### 踩坑：拖拽层搬家时 style 没清零（「按下鼠标视角猛跳一下」）
+
+平移改到 CSS 之后，`attribute` 恒为 `translate(0, 0)`，真实位置只在 `style` 里。
+但拖动画布时官方会把整块画布搬进 **workspace drag surface**
+（`set_contents_and_show()`），搬家用的是：
+
+```js
+i.firstElementChild.setAttribute("transform", "translate(0, 0) scale(" + r + ")")
+```
+
+它只重置 **attribute**，不管 style。于是：
+
+- 搬进 surface 的一瞬间，style 里还留着上一个 scroll 的 `translate(-62px, -79px)`；
+- CSS 覆盖 attribute → 内容多偏一个旧 scroll；
+- 视觉上就是**按下鼠标跳一下、松开又跳回来**，拖动过程反而正常（偏移恒定）。
+
+积木少时必现（几十块时 `use_workspace_drag_surface_` 走 surface 路径）；
+积木多（chipmunk2d 5513 块）实测 `surf=0`，走普通 `translate()`，所以没症状 —— 这就是
+「积木多没问题、积木少有问题」的来源。
+
+修法：`set_contents_and_show()` 里连 style 一起清零（`patch_editor.js` 的 `PANSURF_*`）。
+
+```js
+i.firstElementChild.style.transform = "translate(0px, 0px) scale(" + r + ")";
+```
+
+实测（预瞄 28 块，鼠标 -100,-50）：修前按下 80ms 积木就偏 (-70,-83)；
+修后按下只跟手 (-8,-3)，松手累计 (-100,-49)，停止时无二次跳动。
+`set_scale(1.35)` 下同样对齐。chipmunk2d 回归不变。
+
 #### 合计（chipmunk2d 5513 块，同一初始位置、同一段拖动）
 
 | | 官方 | 副本 |
@@ -591,7 +621,7 @@ tools/
 - **`instrument.js restore` 会冲掉数值补丁**（它用 `.bak` 覆盖 bundle），restore 之后要重跑 `patch_num.js apply`
 - **自带 `compile_result` 但 `scenes[].actors` 为空的作品会卡在「初始化」**：页面侧看到有编译产物就跳过编译，`normalizeProject` 也就没机会补角色层。修法在 `server.js prepareProject()`——首次取作品数据时判断「有 compile_result 且哪个场景 actors 为空」，就地补齐后再返回（florr 21.7 MB → 10.5 MB）
 - **CDP 回传 MB 级对象会被 SIGTERM**，大对象一律 `POST /k4p/dump` 落盘
-- **截图要等 15~20 秒**，首帧加载图片资源慢，9 秒时可能还停在 `正在加载图片资源(0/174)`
+- **截图要等 10~15 秒**，首帧加载图片资源慢，6 秒时可能还停在 `正在加载图片资源(0/174)`
 - 文件被占用时先 `taskkill //IM "Kitten4播放器.exe" //F`
 - `lists_get_value` 的下标是 1-based，传 0 会抛 `lists_get_value_bad_index`（jelly car 就栽在这，属于作品自身问题）
 
