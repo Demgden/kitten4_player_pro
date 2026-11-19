@@ -507,6 +507,37 @@ i.firstElementChild.style.transform = "translate(0px, 0px) scale(" + r + ")";
 | 静止 | 30~38 ms（26~33 fps） | **16.7 ms（60 fps）** |
 | 拖视角 | 96 ms（10 fps） | **51 ms（20 fps）** |
 
+### 阶段 6e：整页缩放（让 UI 密度接近网页版）
+
+编辑器自带的缩放只作用于**积木区**（Ctrl+滚轮 / 右下角百分比），侧栏、顶部工具栏、
+弹窗、角色列表都是固定像素，大屏上这些固定尺寸的 UI 占比就很大。
+网页版可以整页 Ctrl+- 缩小，桌面版做不到。
+
+做法是 Chromium 的页面缩放，`webContents.setZoomFactor(f)`：
+CSS 像素整体变小、布局重新排版，跟浏览器 Ctrl+- 的表现一致。
+
+| 项 | 值 |
+|---|---|
+| 快捷键 | `Ctrl+=` / `Ctrl+-` / `Ctrl+0`（复位 100%），步进 0.05 |
+| 范围 | 0.5 ~ 2.0 |
+| 持久化 | `userData/k4p-zoom.json`（`{factor: 0.85}`），独立文件，不影响安装版 |
+| 入口 | `main/index.js` 顶部的 `MAIN_ZOOM` IIFE（`patch_editor.js` 的 `main` 步骤） |
+
+实现要点：
+
+1. `app.on("web-contents-created")` 里给每个 wc 绑 `before-input-event`，
+   命中就在**主进程**改 factor，`ev.preventDefault()` 拦掉页面默认行为。
+2. `dom-ready` + `did-finish-load` 各应用一次（赶在首屏重排前设上，避免闪一下）。
+3. `setVisualZoomLevelLimits(1, 1)` 关掉触控板捏合缩放，避免两套缩放打架。
+4. 每次按键写一次 json（几十字节），顺手在页面里弹一个 0.8s 的 `界面缩放 85%` 提示。
+
+实测（预瞄，系统 DPI 125%，窗口 1280×800）：
+`1.00 → 0.85` 时 `documentElement.clientWidth` 1266 → **1490**，
+`clientHeight` 788 → 898，整页元素同比缩小；积木区右下角那个百分比仍是独立的 100%。
+
+> 测试提示：CDP 的 `Input.dispatchKeyEvent` 能触发 `before-input-event`
+> （`_probe/ed.js --combo=ctrl+-:3`），不用手点也能验快捷键。
+
 ---
 
 ## 性能数据

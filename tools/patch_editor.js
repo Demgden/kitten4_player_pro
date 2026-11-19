@@ -222,6 +222,49 @@ const MAIN_BOOT =
   'a.commandLine.appendSwitch("enable-gpu-rasterization");' +
   'a.commandLine.appendSwitch("ignore-gpu-blocklist");}catch(_){}})();\n';
 
+/**
+ * 整页缩放（等价浏览器 Ctrl+加 / Ctrl+减 / Ctrl+0）。
+ * 编辑器自己只有积木区的缩放（Ctrl+滚轮 / 右下角百分比），侧栏、顶部工具栏、弹窗尺寸固定，
+ * 大屏上这些固定像素的 UI 占比就很大。webContents.setZoomFactor 是 Chromium 的页面缩放，
+ * 所有元素一起缩，布局会重新排版，跟网页版表现一致。
+ * 值存 userData/k4p-zoom.json（和安装版共用的 userData 里放独立文件，不影响安装版）。
+ */
+const MAIN_ZOOM = `/* k4p-zoom：整页缩放，所有界面元素一起缩（只作用于本副本） */
+(function(){try{
+var E=require("electron"),app=E.app,fs=require("fs"),path=require("path");
+if(!app||!app.on)return;
+var MIN=0.5,MAX=2,STEP=0.05,FILE=path.join(app.getPath("userData"),"k4p-zoom.json"),f=1;
+try{var j=JSON.parse(fs.readFileSync(FILE,"utf8"));if(typeof j.factor==="number"&&j.factor>=MIN&&j.factor<=MAX)f=j.factor;}catch(_){}
+function save(){try{fs.writeFileSync(FILE,JSON.stringify({factor:f}))}catch(_){}}
+function clamp(v){v=Math.round(v*100)/100;return v<MIN?MIN:v>MAX?MAX:v}
+function toast(wc){
+  var txt="界面缩放 "+Math.round(f*100)+"%";
+  var js='(function(t){var d=document.getElementById("k4p-zoom-tip");if(!d){d=document.createElement("div");d.id="k4p-zoom-tip";d.style.cssText="position:fixed;z-index:2147483647;left:50%;bottom:96px;transform:translateX(-50%);padding:6px 14px;border-radius:6px;background:rgba(24,26,30,.88);color:#fff;font:13px/1.5 system-ui,-apple-system,sans-serif;pointer-events:none;opacity:0;transition:opacity .18s";document.body.appendChild(d);}d.textContent=t;d.style.opacity="1";clearTimeout(window.__k4pZoomTip);window.__k4pZoomTip=setTimeout(function(){d.style.opacity="0"},800);})('+JSON.stringify(txt)+')';
+  try{wc.executeJavaScript(js)}catch(_){}
+}
+function apply(wc,tip){try{wc.setZoomFactor(f)}catch(_){}if(tip)toast(wc)}
+function bind(wc){
+  try{wc.setVisualZoomLevelLimits(1,1)}catch(_){}
+  wc.on("dom-ready",function(){apply(wc)});
+  wc.on("did-finish-load",function(){apply(wc)});
+  wc.on("before-input-event",function(ev,inp){
+    if(inp.type!=="keyDown"||!(inp.control||inp.meta))return;
+    var k=inp.key,n=null;
+    if(k==="="||k==="+")n=clamp(f+STEP);
+    else if(k==="-")n=clamp(f-STEP);
+    else if(k==="0")n=1;
+    else return;
+    ev.preventDefault();
+    if(n===f)return;
+    f=n;save();apply(wc,true);
+  });
+}
+app.on("web-contents-created",function(_,wc){bind(wc)});
+app.whenReady().then(function(){try{E.BrowserWindow.getAllWindows().forEach(function(w){apply(w.webContents)})}catch(_){}});
+}catch(_){}})();
+`;
+
+
 function backup(file) {
   const bak = file + '.k4p.bak';
   if (!fs.existsSync(bak)) fs.copyFileSync(file, bak);
@@ -368,16 +411,25 @@ function main() {
   ]);
 
   const mainSrc = fs.readFileSync(mainJs, 'utf8');
-  let mainRep = 'skip(已打)';
-  if (want('main') && !mainSrc.includes(MARK.main)) {
-    mainRep = 'ok';
-    if (!opt.check) { backup(mainJs); fs.writeFileSync(mainJs, MAIN_BOOT + mainSrc); }
-  }
+  let mainOut = mainSrc;
+  const mainRep = [];
+  if (want('main') && !mainOut.includes(MARK.main)) {
+    mainOut = MAIN_BOOT + mainOut;
+    mainRep.push('启动开关 ok');
+  } else mainRep.push('启动开关 ' + (want('main') ? 'skip(已打)' : 'skip(未选)'));
+  if ((want('main') || want('zoom')) && !mainOut.includes('/* k4p-zoom')) {
+    // 放在 bootstrap 之后（两者都是顶层 IIFE，先后无关，只为文件好读）
+    const nl = mainOut.indexOf('\n', mainOut.indexOf('})();'));
+    const at = mainOut.startsWith('/* k4p-perf-bootstrap') && nl > 0 ? nl + 1 : 0;
+    mainOut = mainOut.slice(0, at) + MAIN_ZOOM + mainOut.slice(at);
+    mainRep.push('整页缩放 ok');
+  } else mainRep.push('整页缩放 ' + (want('main') || want('zoom') ? 'skip(已打)' : 'skip(未选)'));
+  if (mainOut !== mainSrc && !opt.check) { backup(mainJs); fs.writeFileSync(mainJs, mainOut); }
 
   console.log('目标：' + root);
   for (const [n, r] of b.report) console.log('  bundle  ' + n + ' → ' + r);
   for (const [n, r] of h.report) console.log('  html    ' + n + ' → ' + r);
-  console.log('  main    启动开关 → ' + mainRep);
+  for (const r of mainRep) console.log('  main    ' + r);
   console.log(opt.check ? '(只检查，未写入)' : '完成');
 }
 
